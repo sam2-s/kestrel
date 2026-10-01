@@ -384,6 +384,7 @@ name = "kestrel-probe"
 version = "0.1.0"
 dependencies = [
  "kestrel-core",
+ "serde_json",
 ]
 
 [[package]]

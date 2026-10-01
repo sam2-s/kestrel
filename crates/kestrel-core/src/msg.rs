@@ -230,6 +230,40 @@ impl CircleMsg {
     pub fn is_control(&self) -> bool {
         matches!(self, CircleMsg::ReKey { .. })
     }
+
+    /// The position this message carries, if it carries one.
+    ///
+    /// A single accessor rather than a pattern match at every call site, so a
+    /// message type added later cannot be silently treated as having no position
+    /// by one caller and as having one by another.
+    pub fn fix(&self) -> Option<Fix> {
+        match self {
+            CircleMsg::Loc { fix, .. }
+            | CircleMsg::CheckIn { fix, .. }
+            | CircleMsg::Sos { fix, .. } => Some(*fix),
+            CircleMsg::Bye { .. } | CircleMsg::ReKey { .. } => None,
+        }
+    }
+
+    /// The sender's details, for a marker or a notification.
+    pub fn who(&self) -> Option<&Who> {
+        match self {
+            CircleMsg::Loc { who, .. }
+            | CircleMsg::CheckIn { who, .. }
+            | CircleMsg::Sos { who, .. }
+            | CircleMsg::Bye { who, .. } => Some(who),
+            CircleMsg::ReKey { .. } => None,
+        }
+    }
+
+    /// The member id this message was about, for a control message. `None` for
+    /// everything else, which carries no addressee.
+    pub fn addressed_to(&self) -> Option<&str> {
+        match self {
+            CircleMsg::ReKey { to, .. } => Some(to),
+            _ => None,
+        }
+    }
 }
 
 /// A message on an invite channel.
@@ -276,6 +310,42 @@ impl InviteMsg {
             | InviteMsg::Welcome { ts, .. }
             | InviteMsg::Member { ts, .. } => *ts,
         }
+    }
+}
+
+impl CircleMsg {
+    /// A location post.
+    pub fn loc(ts: i64, who: Who, fix: Fix) -> Self {
+        CircleMsg::Loc { v: VERSION, ts, who, fix }
+    }
+
+    /// A check-in.
+    pub fn check_in(ts: i64, who: Who, fix: Fix) -> Self {
+        CircleMsg::CheckIn { v: VERSION, ts, who, fix }
+    }
+
+    /// An emergency.
+    pub fn sos(ts: i64, who: Who, fix: Fix) -> Self {
+        CircleMsg::Sos { v: VERSION, ts, who, fix }
+    }
+
+    /// A signed goodbye.
+    pub fn bye(ts: i64, who: Who) -> Self {
+        CircleMsg::Bye { v: VERSION, ts, who }
+    }
+}
+
+impl Fix {
+    /// A position from a latitude, longitude and accuracy.
+    pub fn new(lat: f64, lon: f64, acc: f64) -> Self {
+        Self { lat, lon, acc }
+    }
+}
+
+impl Who {
+    /// A plain identity, with no status and precise sharing.
+    pub fn plain(name: &str, emoji: &str, hue: i64) -> Self {
+        Who::new(name, emoji, hue, 0.0, ShareMode::Precise, "")
     }
 }
 
