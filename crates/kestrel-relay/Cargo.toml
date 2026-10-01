@@ -1,0 +1,12 @@
+[package]
+name = "kestrel-relay"
+description = "Relay for the Kestrel protocol: stores ciphertext, never plaintext."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kestrel-core.workspace = true

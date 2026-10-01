@@ -1,0 +1,45 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/kestrel-core",
+    "crates/kestrel-relay",
+    "crates/kestrel-probe",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/sam2-s/kestrel"
+authors = ["Sammy <sam2-s@users.noreply.github.com>"]
+
+[workspace.dependencies]
+kestrel-core = { path = "crates/kestrel-core" }
+
+# --- crypto: one coherent generation (sha2 0.11 / rand_core 0.10 / getrandom 0.4) ---
+aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc", "getrandom"] }
+ed25519-dalek = { version = "3.0", default-features = false, features = ["fast", "zeroize", "rand_core"] }
+p256 = { version = "0.14", default-features = false, features = ["arithmetic", "ecdsa", "ecdh", "sha256", "std"] }
+hkdf = "0.13"
+sha2 = { version = "0.11", default-features = false, features = ["alloc"] }
+subtle = "2.6"
+zeroize = { version = "1", default-features = false, features = ["alloc", "derive"] }
+getrandom = { version = "0.4", default-features = false, features = ["std"] }
+base64 = "0.23"
+
+serde = { version = "1", default-features = false, features = ["std", "derive"] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+debug = false
+incremental = false
+
+[profile.dev]
+opt-level = 0
+debug = 1

@@ -1,0 +1,12 @@
+[package]
+name = "kestrel-probe"
+description = "Interop probe: checks this implementation against the published vectors and a live relay."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kestrel-core.workspace = true

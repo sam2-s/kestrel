@@ -1,0 +1,25 @@
+[package]
+name = "kestrel-core"
+description = "Protocol v2 wire format, cryptography and client state machine for Kestrel."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+aes-gcm.workspace = true
+ed25519-dalek.workspace = true
+p256.workspace = true
+hkdf.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+zeroize.workspace = true
+getrandom.workspace = true
+base64.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
