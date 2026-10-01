@@ -22,6 +22,7 @@ pub mod ratchet;
 pub mod rekey;
 pub mod roster;
 pub mod seal;
+pub mod session;
 pub mod vault;
 pub mod wire;
 
