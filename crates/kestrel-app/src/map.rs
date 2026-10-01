@@ -65,21 +65,13 @@ impl Default for Camera {
     fn default() -> Self {
         // A view of most of the world, so a first run is not a white screen with
         // one dot on it.
-        Self {
-            lat: 20.0,
-            lon: 0.0,
-            zoom: 3.0,
-        }
+        Self { lat: 20.0, lon: 0.0, zoom: 3.0 }
     }
 }
 
 impl Camera {
     pub fn new(lat: f64, lon: f64, zoom: f64) -> Self {
-        Self {
-            lat,
-            lon,
-            zoom: zoom.clamp(MIN_ZOOM, MAX_ZOOM),
-        }
+        Self { lat, lon, zoom: zoom.clamp(MIN_ZOOM, MAX_ZOOM) }
     }
 
     /// Move the camera to a position, keeping the zoom.
@@ -96,9 +88,8 @@ impl Camera {
     /// A camera that fits a set of positions, for the "show everyone" button.
     pub fn fitting(positions: &[(f64, f64)], viewport_px: (f64, f64)) -> Self {
         let zoom = geo::zoom_to_fit(positions, viewport_px, (48.0, 280.0));
-        let (lat, lon) = positions
-            .iter()
-            .fold((0.0, 0.0), |acc, (la, lo)| (acc.0 + la, acc.1 + lo));
+        let (lat, lon) =
+            positions.iter().fold((0.0, 0.0), |acc, (la, lo)| (acc.0 + la, acc.1 + lo));
         let n = positions.len().max(1) as f64;
         Self::new(lat / n, lon / n, zoom)
     }
@@ -193,11 +184,7 @@ impl TileRequest {
         for y in &self.ys {
             let ty = (*y).clamp(0, n - 1);
             for x in &self.xs {
-                out.push(TileKey {
-                    z: self.z,
-                    x: geo::wrap_tile_x(*x, self.z),
-                    y: ty,
-                });
+                out.push(TileKey { z: self.z, x: geo::wrap_tile_x(*x, self.z), y: ty });
             }
         }
         out.sort();
@@ -206,14 +193,15 @@ impl TileRequest {
     }
 
     /// How many of these are not already cached.
-    pub fn missing(&self, cached: &BTreeMap<TileKey, ()>, basemap: Basemap) -> Vec<TileKey> {
+    pub fn missing(
+        &self,
+        cached: &BTreeMap<TileKey, ()>,
+        basemap: Basemap,
+    ) -> Vec<TileKey> {
         if !basemap.fetches_tiles() {
             return Vec::new();
         }
-        self.keys()
-            .into_iter()
-            .filter(|k| !cached.contains_key(k))
-            .collect()
+        self.keys().into_iter().filter(|k| !cached.contains_key(k)).collect()
     }
 }
 
@@ -324,16 +312,13 @@ pub fn frame(
         // where a person is, and a hole reads as "nobody is there". The window is
         // bounded, so a member from yesterday is not on the map pretending to be.
         let still_known = now.saturating_sub(member.last_spoke()) <= LAST_KNOWN_MS;
-        let drawable = if still_known {
-            fix.or_else(|| member.last_fix())
-        } else {
-            None
-        };
+        let drawable = if still_known { fix.or_else(|| member.last_fix()) } else { None };
         if let Some(fix) = drawable {
             let (x, y) = to_screen(fix.lat, fix.lon);
             let age = now.saturating_sub(member.last_seen) as f64;
             let sos = matches!(member.last, Some(kestrel_core::msg::CircleMsg::Sos { .. }));
-            let stopped = matches!(member.last, Some(kestrel_core::msg::CircleMsg::Bye { .. }));
+            let stopped =
+                matches!(member.last, Some(kestrel_core::msg::CircleMsg::Bye { .. }));
             markers.push(Marker {
                 member_id: m.member_id.clone(),
                 x,
@@ -385,11 +370,8 @@ pub fn frame(
         }
     }
 
-    let rings = if basemap == Basemap::OffGrid {
-        ring_radii_px(camera)
-    } else {
-        Vec::new()
-    };
+    let rings =
+        if basemap == Basemap::OffGrid { ring_radii_px(camera) } else { Vec::new() };
 
     Frame {
         camera: *camera,
@@ -403,7 +385,12 @@ pub fn frame(
 }
 
 /// Frame to every member, or frame to none.
-pub fn fit(camera: &mut Camera, circle: &Circle, now: i64, viewport_px: (f64, f64)) -> bool {
+pub fn fit(
+    camera: &mut Camera,
+    circle: &Circle,
+    now: i64,
+    viewport_px: (f64, f64),
+) -> bool {
     let positions: Vec<(f64, f64)> = circle
         .members()
         .iter()
@@ -465,7 +452,11 @@ mod tests {
     /// because a circle seals with its *own* identity. Sealing "as" another
     /// member by borrowing one device's signer would produce a post the receiver
     /// correctly discards as its own, and the map would have no markers to test.
-    fn a_circle_with_a_member_at(fix: (f64, f64), name: &str, now: i64) -> (Circle, String) {
+    fn a_circle_with_a_member_at(
+        fix: (f64, f64),
+        name: &str,
+        now: i64,
+    ) -> (Circle, String) {
         let channel = kestrel_core::kdf::channel_id(&kestrel_core::kdf::anchor(&SEED));
         let opened = kestrel_core::wire::epoch_at(now);
 
@@ -479,7 +470,8 @@ mod tests {
             now,
         );
         let other = Identity::generate();
-        let mut theirs = Circle::join(other.clone(), &SEED, channel, 0, opened, Roster::new(), now);
+        let mut theirs =
+            Circle::join(other.clone(), &SEED, channel, 0, opened, Roster::new(), now);
 
         let post = theirs
             .location(
@@ -577,11 +569,8 @@ mod tests {
 
     #[test]
     fn tile_keys_are_wrapped_and_clamped_into_the_world() {
-        let request = TileRequest {
-            z: 2,
-            xs: vec![-3, -1, 0, 1, 4, 7],
-            ys: vec![-2, 0, 1, 9],
-        };
+        let request =
+            TileRequest { z: 2, xs: vec![-3, -1, 0, 1, 4, 7], ys: vec![-2, 0, 1, 9] };
         let keys = request.keys();
         let n = 4i64;
         for k in &keys {
@@ -608,11 +597,7 @@ mod tests {
     fn the_same_tile_is_not_requested_twice() {
         // A view across the antimeridian names columns that wrap onto each other.
         // Asking twice means fetching twice and painting the tile over itself.
-        let request = TileRequest {
-            z: 2,
-            xs: vec![0, 4, -4, 8],
-            ys: vec![0, 8, -8],
-        };
+        let request = TileRequest { z: 2, xs: vec![0, 4, -4, 8], ys: vec![0, 8, -8] };
         let keys = request.keys();
         let mut sorted = keys.clone();
         sorted.sort();
@@ -715,8 +700,10 @@ mod tests {
         let now = at(2_980_471);
         let (circle, id) = a_circle_with_a_member_at((44.98, -93.27), "Ana", now + 1_000);
         let camera = Camera::new(44.98, -93.27, 15.0);
-        let fresh = frame(&circle, &camera, Basemap::OffGrid, (400.0, 800.0), now + 1_000, "x");
-        let older = frame(&circle, &camera, Basemap::OffGrid, (400.0, 800.0), now + 90_000, "x");
+        let fresh =
+            frame(&circle, &camera, Basemap::OffGrid, (400.0, 800.0), now + 1_000, "x");
+        let older =
+            frame(&circle, &camera, Basemap::OffGrid, (400.0, 800.0), now + 90_000, "x");
         let f = fresh.markers.iter().find(|m| m.member_id == id).unwrap().freshness;
         let o = older.markers.iter().find(|m| m.member_id == id).unwrap().freshness;
         assert!(f > o, "fresh {f} should exceed older {o}");
@@ -790,7 +777,15 @@ mod tests {
                 now + 1_000,
             )
             .unwrap();
-        let mut watch = Circle::join(mine, &SEED, circle.channel().to_string(), 0, opened, Roster::new(), now);
+        let mut watch = Circle::join(
+            mine,
+            &SEED,
+            circle.channel().to_string(),
+            0,
+            opened,
+            Roster::new(),
+            now,
+        );
         watch.ingest_feed(&feed_of_one(&sos, now + 1_000), now + 1_000);
         let f = frame(&watch, &camera, Basemap::OffGrid, viewport, now + 1_000, "x");
         let m = f.markers.first().expect("a marker");
@@ -831,8 +826,10 @@ mod tests {
         let now = at(2_980_471);
         let (circle, _) = a_circle_with_a_member_at((44.98, -93.27), "Ana", now + 1_000);
         let camera = Camera::new(44.98, -93.27, 14.0);
-        let off = frame(&circle, &camera, Basemap::OffGrid, (400.0, 800.0), now + 1_000, "x");
-        let street = frame(&circle, &camera, Basemap::Dark, (400.0, 800.0), now + 1_000, "x");
+        let off =
+            frame(&circle, &camera, Basemap::OffGrid, (400.0, 800.0), now + 1_000, "x");
+        let street =
+            frame(&circle, &camera, Basemap::Dark, (400.0, 800.0), now + 1_000, "x");
         assert!(!off.rings.is_empty(), "off-grid draws rings");
         assert!(street.rings.is_empty(), "a street map has no rings");
     }
@@ -864,8 +861,15 @@ mod tests {
         // Two members, far apart.
         for (lat, lon, name) in [(44.98, -93.27, "Ana"), (51.5, -0.12, "Bo")] {
             let id = Identity::generate();
-            let mut theirs =
-                Circle::join(id.clone(), &SEED, a.channel().to_string(), 0, opened, Roster::new(), now);
+            let mut theirs = Circle::join(
+                id.clone(),
+                &SEED,
+                a.channel().to_string(),
+                0,
+                opened,
+                Roster::new(),
+                now,
+            );
             let post = theirs
                 .location(
                     &me(&id, name, "", 0.7, ShareMode::Precise),
@@ -895,7 +899,11 @@ mod tests {
         }
         let mut camera = Camera::default();
         assert!(fit(&mut camera, &a, now + 1_000, (400.0, 800.0)));
-        assert!(camera.zoom < 6.0, "two distant members fit at a wide zoom: {}", camera.zoom);
+        assert!(
+            camera.zoom < 6.0,
+            "two distant members fit at a wide zoom: {}",
+            camera.zoom
+        );
         assert!((MIN_ZOOM..=MAX_ZOOM).contains(&camera.zoom));
     }
 
