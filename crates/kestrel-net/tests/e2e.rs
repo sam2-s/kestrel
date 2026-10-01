@@ -488,8 +488,10 @@ async fn a_replay_is_refused_by_the_receiver_even_when_the_relay_served_it_twice
         .location(&b.who(0.8), fix(44.98, -93.27), ShareMode::Precise, at(EPOCH0) + MS)
         .expect("a post seals");
 
-    let events =
-        a.circle.ingest_feed(&feed_of(std::slice::from_ref(&post), at(EPOCH0) + MS), at(EPOCH0) + MS);
+    let events = a.circle.ingest_feed(
+        &feed_of(std::slice::from_ref(&post), at(EPOCH0) + MS),
+        at(EPOCH0) + MS,
+    );
     assert_eq!(positions_from(&events, b.member_id()), 1);
 
     // The same bytes again, under a different receive time so it looks like a
