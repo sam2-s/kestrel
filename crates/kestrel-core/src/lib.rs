@@ -26,6 +26,8 @@ pub mod session;
 pub mod vault;
 pub mod wire;
 
+/// The protocol tag this build speaks. Prefixes every derivation and appears in
+/// both the associated data and the signed string.
 pub use kdf::PROTO;
 
 /// The group order of P-256, minus one. A private scalar must be strictly

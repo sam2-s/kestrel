@@ -251,6 +251,18 @@ pub fn random4() -> [u8; 4] {
     b
 }
 
+/// Eight random bytes, for callers that want a little randomness without
+/// committing to a random-number dependency of their own.
+///
+/// A jittered backoff is the caller here. `None` only if the system entropy
+/// source is unavailable, which a caller should treat as "do not pretend to be
+/// random".
+pub fn random_bytes_8() -> Option<[u8; 8]> {
+    let mut b = [0u8; 8];
+    getrandom::fill(&mut b).ok()?;
+    Some(b)
+}
+
 /// `n` random bytes, for seeds, fresh entropy and invite secrets.
 pub fn random_bytes<const N: usize>() -> [u8; N] {
     let mut b = [0u8; N];

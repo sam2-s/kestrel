@@ -647,7 +647,7 @@ fn a_trail_is_bounded() {
                 ts,
             )
             .unwrap();
-        t.a.ingest(&p, &t.a.roster().clone(), ts);
+        t.a.ingest(&p, &t.a.roster().clone(), ts).expect("a fresh position is accepted");
     }
     let state = t.a.member(t.b_identity.member_id()).unwrap();
     assert_eq!(state.trail.len(), wire::TRAIL_CAP);

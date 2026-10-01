@@ -21,7 +21,14 @@
 //! There is no ratchet on a beacon channel. A beacon is one emergency, and the
 //! epoch still travels on every point so a post is still bound to a time.
 
-use crate::{b64, geo, identity::Identity, kdf, msg, seal, wire, wire::Post};
+use crate::{
+    b64, geo,
+    identity::Identity,
+    kdf,
+    msg::{self, CircleMsg},
+    seal,
+    wire::{self, Post},
+};
 
 /// Length of the shared secret in a help link.
 pub const SECRET_LEN: usize = 32;
@@ -244,17 +251,31 @@ impl Beacon {
             .collect()
     }
 
+    /// Build the posts for a position, for every live viewer.
+    ///
+    /// The body's timestamp is stamped here rather than by the caller, because it
+    /// has to equal the post header's: a receiver refuses a message whose inner
+    /// and outer timestamps disagree, so a body left at zero would never open.
+    pub fn position_posts(&self, message: &CircleMsg, epoch: i64, ts: i64) -> Vec<Post> {
+        let mut stamped = message.clone();
+        match &mut stamped {
+            CircleMsg::Loc { ts: t, .. }
+            | CircleMsg::CheckIn { ts: t, .. }
+            | CircleMsg::Sos { ts: t, .. }
+            | CircleMsg::Bye { ts: t, .. }
+            | CircleMsg::ReKey { ts: t, .. } => *t = ts,
+        }
+        let json = serde_json::to_string(&stamped).unwrap_or_default();
+        self.posts(&json, epoch, ts)
+    }
+
     /// The posts that end every live session, for a check-in or a stop.
     pub fn goodbye_posts(&self, name: &str, emoji: &str, hue: u16, ts: i64) -> Vec<Post> {
         let body = msg::CircleMsg::bye(
-            ts,
+            0,
             msg::Who::new(name, emoji, hue as i64, 0.0, msg::ShareMode::Precise, ""),
         );
-        self.posts(
-            &serde_json::to_string(&body).unwrap_or_default(),
-            wire::epoch_at(ts),
-            ts,
-        )
+        self.position_posts(&body, wire::epoch_at(ts), ts)
     }
 
     /// Retire every viewer that was live at this instant.

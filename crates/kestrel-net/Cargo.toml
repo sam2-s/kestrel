@@ -1,0 +1,24 @@
+[package]
+name = "kestrel-net"
+description = "HTTP transport for Kestrel: the poller, the sender, and the outbox."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kestrel-core.workspace = true
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "webpki-roots", "rustls-no-provider", "gzip", "json", "http2", "charset", "socks"] }
+tokio = { version = "1", default-features = false, features = ["rt", "time", "sync"] }
+serde.workspace = true
+serde_json.workspace = true
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+url = { version = "2", default-features = false }
+
+[dev-dependencies]
+kestrel-relay = { path = "../kestrel-relay" }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "net"] }
+tempfile = "3"
