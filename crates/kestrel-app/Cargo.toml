@@ -27,6 +27,8 @@ qrcode = { version = "0.14", default-features = false }
 rqrr = "0.11"
 jni = "0.22"
 log = "0.4"
+ndk-context = "0.1"
+android_logger = "0.13"
 
 [features]
 # Compiles the app for the host, so the map, the projection and the screens can be

@@ -14,23 +14,13 @@ use kestrel_app::{map::TileRequest, permissions::Grant, state::Fix};
 
 fn main() {
     // Tile coverage: which tiles a zoom level needs, and how duplicates collapse.
-    let r = TileRequest {
-        z: 2,
-        xs: vec![-3, -1, 0, 1, 4, 7],
-        ys: vec![-2, 0, 1, 9],
-    };
+    let r = TileRequest { z: 2, xs: vec![-3, -1, 0, 1, 4, 7], ys: vec![-2, 0, 1, 9] };
     let keys = r.keys();
     println!("tiles len={} keys={keys:?}", keys.len());
 
     // A position that must not reach the map: the platform reports this before it
     // has a location, and drawing it would put a marker in the Gulf of Guinea.
-    let zero = Fix {
-        lat: 0.0,
-        lon: 0.0,
-        acc: 0.0,
-        ts: 1_000,
-        battery: 0.5,
-    };
+    let zero = Fix { lat: 0.0, lon: 0.0, acc: 0.0, ts: 1_000, battery: 0.5 };
     println!("zero fix usable={}", zero.is_usable());
 
     // The word the platform sends, against what the app makes of it.

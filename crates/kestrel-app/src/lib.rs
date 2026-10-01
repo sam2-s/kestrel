@@ -7,6 +7,7 @@
 
 pub mod map;
 pub mod permissions;
+pub mod platform;
 pub mod state;
 pub mod strings;
 
