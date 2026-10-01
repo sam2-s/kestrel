@@ -32,6 +32,22 @@ pub enum Call {
     SetProxy(String),
 }
 
+/// Where the app may keep files.
+///
+/// The platform's own answer, so there is one place that knows how to ask. On Android
+/// it is the app's private storage, which is already scoped to this app and needs no
+/// permission; anywhere else it is a directory beside the executable.
+pub fn data_dir() -> std::path::PathBuf {
+    #[cfg(target_os = "android")]
+    if let Some(dir) = crate::android::data_dir() {
+        return dir;
+    }
+    // Nowhere sensible to put files on a desktop, and this function is only reached by
+    // the host preview and by tests. A temp directory that the OS reclaims is the right
+    // amount of pretending.
+    std::env::temp_dir().join("kestrel")
+}
+
 /// What the app asks of the platform.
 ///
 /// Methods take `&self` and return nothing: a platform call that fails leaves the

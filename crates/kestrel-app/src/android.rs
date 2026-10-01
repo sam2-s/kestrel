@@ -228,6 +228,53 @@ fn ndk_context_is_ready() -> bool {
     std::panic::catch_unwind(ndk_context::android_context).is_ok()
 }
 
+/// The app's private storage directory, as the platform sees it.
+///
+/// Asked of the Java side rather than assumed, because the path is platform-specific
+/// and an app that guessed it would write its keys somewhere another app could reach.
+/// Returns None when there is no context, which is a before-`onCreate` case only.
+pub fn data_dir() -> Option<std::path::PathBuf> {
+    let raw = state::shared().activity.lock().map(|a| *a).unwrap_or(0);
+    let _ = raw;
+    if !ndk_context_is_ready() {
+        return None;
+    }
+    let ctx = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) };
+    let path = vm
+        .attach_current_thread(|env| -> Result<Option<String>, jni::errors::Error> {
+            let Ok(class) = env.find_class("android/app/ActivityThread") else {
+                return Ok(None);
+            };
+            let current = env.call_static_method(
+                class,
+                "currentApplication",
+                "()Landroid/content/Context;",
+                &[],
+            )?;
+            if current.is_null() {
+                return Ok(None);
+            }
+            let context = jni::objects::JObject::from(current);
+            let name = jni::strings::JNIString::new("getFilesDir");
+            let dir = env.call_method(&context, name.as_ref(), "()Ljava/io/File;", &[])?;
+            if dir.is_null() {
+                return Ok(None);
+            }
+            let file = jni::objects::JObject::from(dir.l()?);
+            let name = jni::strings::JNIString::new("getAbsolutePath");
+            let path =
+                env.call_method(&file, name.as_ref(), "()Ljava/lang/String;", &[])?;
+            if path.is_null() {
+                return Ok(None);
+            }
+            let text = path.l()?.try_to_string(env)?;
+            Ok(Some(text))
+        })
+        .unwrap_or(None);
+    path.filter(|p| !p.is_empty()).map(std::path::PathBuf::from)
+}
+
 /// The JNI signature of each bridge method.
 ///
 /// Written out rather than derived from the calls, so a rename on either side is a

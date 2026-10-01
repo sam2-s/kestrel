@@ -6,10 +6,13 @@
 //! both worth testing, and neither needs a phone.
 
 pub mod bridge;
+pub mod draw;
+pub mod logic;
 pub mod map;
 pub mod permissions;
 pub mod platform;
 pub mod state;
+pub mod store;
 pub mod strings;
 
 #[cfg(target_os = "android")]

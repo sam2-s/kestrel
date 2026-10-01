@@ -1841,6 +1841,7 @@ dependencies = [
  "android-activity",
  "android_logger",
  "eframe",
+ "egui",
  "image",
  "jni 0.22.4",
  "kestrel-core",
@@ -1851,6 +1852,7 @@ dependencies = [
  "rqrr",
  "serde",
  "serde_json",
+ "sha2",
  "zeroize",
 ]
 
