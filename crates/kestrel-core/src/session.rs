@@ -80,11 +80,29 @@ impl MemberState {
     }
 
     /// The newest position, if it is recent enough to draw.
+    ///
+    /// A member's *current* position, so a goodbye makes this `None`: they are
+    /// not there any more. Use [`MemberState::last_fix`] to draw them where they
+    /// last were, greyed out.
     pub fn position(&self, now: i64) -> Option<Fix> {
         self.last
             .as_ref()
             .filter(|m| now.saturating_sub(m.timestamp()) <= STALE_MS)
             .and_then(|m| m.fix())
+    }
+
+    /// The newest position in this member's trail, whenever it was.
+    ///
+    /// For a member who has stopped: the map should show where they last were,
+    /// not nothing, because a missing dot reads as "nobody is there" and a greyed
+    /// one reads as "they are not there now".
+    pub fn last_fix(&self) -> Option<Fix> {
+        self.trail.iter().rev().find_map(|m| m.fix())
+    }
+
+    /// When this member last said anything, position or not.
+    pub fn last_spoke(&self) -> i64 {
+        self.last.as_ref().map(|m| m.timestamp()).unwrap_or(0)
     }
 }
 
@@ -488,14 +506,14 @@ impl Circle {
             }
 
             CircleMsg::Bye { .. } => {
+                if let Some(who) = message.who() {
+                    self.roster.set_name(&post.m, &who.name);
+                }
                 if !self.accept_position(&post.m, post.e, message.clone(), now)? {
                     return Err(Reject::Replay);
                 }
                 if let Some(s) = self.members.get_mut(&post.m) {
                     s.removed = false;
-                }
-                if let Some(who) = message.who() {
-                    self.roster.set_name(&post.m, &who.name);
                 }
                 events.push(Event::Stopped { member: post.m.clone() });
                 return Ok(events);
@@ -504,14 +522,15 @@ impl Circle {
             _ => {}
         }
 
+        // Record the name before the state is refreshed, or a map reading the
+        // snapshot would show a nameless dot until the next message arrived.
+        if let Some(who) = message.who() {
+            self.roster.set_name(&post.m, &who.name);
+        }
+
         // --- 8. strictly newer, per member ---
         if !self.accept_position(&post.m, post.e, message.clone(), now)? {
             return Err(Reject::Replay);
-        }
-
-        // Record the name and re-key a matching place, both on-device.
-        if let Some(who) = message.who() {
-            self.roster.set_name(&post.m, &who.name);
         }
         if let Some(fix) = message.fix() {
             let member_name =
@@ -566,6 +585,13 @@ impl Circle {
             last_seen: 0,
             removed: false,
         });
+        // Refresh the roster snapshot alongside the position. A member's name
+        // arrives in their first message, after the row was created, and a map
+        // reading a stale copy would show a nameless dot for ever.
+        if let Some(current) = self.roster.get(member) {
+            state.member = current.clone();
+            state.hue = current.hue;
+        }
         state.last = Some(message.clone());
         state.last_seen = now;
         state.trail.push(message);

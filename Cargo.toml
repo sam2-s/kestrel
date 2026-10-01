@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/kestrel-core",
     "crates/kestrel-relay",
+    "crates/kestrel-app",
     "crates/kestrel-net",
     "crates/kestrel-probe",
 ]
@@ -17,6 +18,8 @@ authors = ["Sammy <sam2-s@users.noreply.github.com>"]
 
 [workspace.dependencies]
 kestrel-core = { path = "crates/kestrel-core" }
+kestrel-net = { path = "crates/kestrel-net" }
+kestrel-app = { path = "crates/kestrel-app" }
 
 # --- crypto: one coherent generation (sha2 0.11 / rand_core 0.10 / getrandom 0.4) ---
 aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc", "getrandom"] }

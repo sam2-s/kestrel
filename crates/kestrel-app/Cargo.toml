@@ -1,0 +1,34 @@
+[package]
+name = "kestrel-app"
+description = "The Kestrel Android app."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+name = "kestrel_app"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+kestrel-core.workspace = true
+kestrel-net.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-activity = "0.6"
+eframe = { version = "0.36", default-features = false, features = ["glow", "android-native-activity", "default_fonts"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+qrcode = { version = "0.14", default-features = false }
+rqrr = "0.11"
+jni = "0.22"
+log = "0.4"
+
+[features]
+# Compiles the app for the host, so the map, the projection and the screens can be
+# tested without an emulator. Never enabled for a release build.
+host-preview = []
