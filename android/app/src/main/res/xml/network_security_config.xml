@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext is off everywhere.
+
+  Kestrel's traffic is encrypted by its own protocol, but that is not a reason to let
+  the transport be plaintext: it would leak the relay address and the timing of every
+  share to anyone on the network path, and the relay address is the one thing that
+  identifies which circle a person belongs to.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

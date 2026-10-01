@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  No AppCompat, so no light/dark qualifiers to keep in step with anything. The theme
+  exists for three reasons and does nothing else:
+
+  - it has no action bar, because egui draws its own;
+  - it is a dark theme, because this app is opened at night, outdoors, by people who
+    do not want a white screen;
+  - it draws under the status bar, so the map can go to the top of the screen.
+-->
+<resources>
+    <style name="Theme.Kestrel" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

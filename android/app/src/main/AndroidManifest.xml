@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Kestrel's manifest.
+
+  Every permission here is one the app cannot work without, and the comments say
+  what breaks without it. Nothing is requested that the app does not use: a user who
+  reads this should not find a permission that looks like surveillance.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Location, in both precisions. Coarse is requested alongside fine because
+      Android 12 lets a user grant coarse only, and the app shares properly at a
+      kilometre rather than refusing to share at all.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!--
+      Background location, so a share survives the app being closed. Requested on its
+      own, after the foreground grant, because Android 11 and later ignore a combined
+      request.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <!-- The foreground service's notification. Without it Android 13+ starts the
+         service silently and the user would have no way to know they are tracked. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Scanning an invite code. Declared optional so the app installs on a device
+         without a camera, where joining still works by typing the code in. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+
+    <!-- Foreground service, typed for location. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+
+    <!-- Reaching the relay. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Waking the service on a timer, so a share starts again after a reboot
+         instead of waiting for the user to open the app. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!--
+      Declared optional rather than requested: the app works over Tor without it and
+      uses it to choose a network the user is unlikely to recognise.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <application
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Kestrel">
+
+        <!--
+          The whole app is one activity, so the share notification can bring this one
+          back rather than starting a second copy. `configChanges` keeps the egui
+          surface and the Rust state across a rotation: a config change that destroys
+          the activity would take a running share's UI with it.
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density|smallestScreenSize"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          The share service. Not exported: nothing outside the app should be able to
+          start it, because starting it starts a location upload.
+        -->
+        <service
+            android:name=".ShareService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <!-- The package was replaced, so a running share should resume. -->
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

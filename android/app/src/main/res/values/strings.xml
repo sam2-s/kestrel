@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The strings Android itself shows: the app's name, its service notification, and the
+  few labels in the permission flows.
+
+  Deliberately short. These are the words a user sees at the worst moments — a
+  dialog about location, a notification while they are trying to work out whether
+  they are being tracked — and a string that takes three lines to say "sharing" is a
+  string that will not get read.
+-->
+<resources>
+    <string name="app_name">Kestrel</string>
+
+    <!-- The share notification. The title says it is on; the text says who for. -->
+    <string name="notif_sharing_title">Sharing your location</string>
+    <string name="notif_sharing_text">Visible to your circle</string>
+    <string name="notif_stop">Stop</string>
+    <string name="notif_open">Open</string>
+
+    <!-- Asked for by the platform when background location is requested. -->
+    <string name="why_background">Kestrel needs location while closed so your circle can see you when your phone is in your pocket.</string>
+    <string name="why_camera">Kestrel needs the camera to read an invite code. You can also type the code in.</string>
+
+    <!-- Shown when a permission is refused and only the settings app can fix it. -->
+    <string name="open_settings">Open settings</string>
+    <string name="not_now">Not now</string>
+
+    <string name="scan_title">Scan a code</string>
+    <string name="scan_hint">Point the camera at the QR code</string>
+    <string name="scan_cancel">Cancel</string>
+</resources>

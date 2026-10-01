@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  No backup, and no transfer to a new phone.
+
+  A backed-up Kestrel is a backed-up copy of the keys that decrypt a location
+  history. Whoever restores it holds that history, and the people in it never agreed
+  to that. So the answer to "should a backup exist" is no, and `allowBackup=false`
+  in the manifest says the same thing for the older mechanism.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>
