@@ -5,6 +5,7 @@
 //! difference is deliberate — a permission state machine and a tile request are
 //! both worth testing, and neither needs a phone.
 
+pub mod bridge;
 pub mod map;
 pub mod permissions;
 pub mod platform;
@@ -13,3 +14,5 @@ pub mod strings;
 
 #[cfg(target_os = "android")]
 pub mod android;
+#[cfg(target_os = "android")]
+pub mod entry;

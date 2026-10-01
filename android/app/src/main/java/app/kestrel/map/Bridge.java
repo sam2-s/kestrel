@@ -25,6 +25,11 @@ import android.provider.Settings;
  * this process, and the activity is reachable as the application context whenever the
  * app is in the foreground. A static Activity field would be a second thing to keep
  * correct, and it would outlive the activity it pointed at.
+ *
+ * <p>The library is loaded by {@link MainActivity}, from the manifest's
+ * {@code android.app.lib_name}, before {@code onCreate}. That ordering matters: the
+ * service calls {@link #reportLocation} from a boot broadcast, long before any activity
+ * exists, and it works because the process has already loaded the library by then.
  */
 final class Bridge {
     private Bridge() {
@@ -149,7 +154,7 @@ final class Bridge {
         ShareService.stop(c);
     }
 
-    /** Open the camera to read a code. */
+    /** Open the scanner. */
     static void startScan() {
         MainActivity a = activity();
         if (a == null) {
@@ -157,6 +162,18 @@ final class Bridge {
         }
         a.beginScan();
     }
+
+    /**
+     * The back gesture, decided in Rust.
+     *
+     * <p>Routed through here because that is the boundary class, and because the
+     * activity has no business knowing which screen is up: only the native side does.
+     */
+    static void onBackPressed() {
+        onBackPressedNative();
+    }
+
+    private static native void onBackPressedNative();
 
     /**
      * Post a notification.
@@ -196,8 +213,64 @@ final class Bridge {
      */
     static native void reportLocation(int latE7, int lonE7, int accMetres, long tsMillis, int batteryPercent);
 
-    /** Tell Rust what a scanned code says. */
+    /** Tell Rust what a scanned code says. An empty string means the scan did not work. */
     static native void reportScan(String text);
+
+    // ------------------------------------------------------ the scanner's frames
+
+    /**
+     * Preview frames waiting for the decoder.
+     *
+     * <p>Bounded at two. A queue that grows without limit is a memory leak with a camera
+     * pointed at it, and the decoder is slower than the camera: if it cannot keep up,
+     * dropping frames is correct and holding them all is not.
+     */
+    private static final java.util.concurrent.ArrayBlockingQueue<byte[]> frames =
+            new java.util.concurrent.ArrayBlockingQueue<>(2);
+
+    /**
+     * Whether the decoder wants another frame.
+     *
+     * <p>Set for exactly one frame at a time. Two frames in flight would mean the decoder
+     * reads a buffer that the camera is overwriting underneath it.
+     */
+    private static volatile boolean wantsFrame;
+
+    /**
+     * Hand a preview frame to the decoder.
+     *
+     * <p>Called from the camera's callback thread, thirty times a second.
+     */
+    static void pushFrame(byte[] frame) {
+        wantsFrame = false;
+        frames.offer(frame);
+    }
+
+    /** Whether the decoder wants another frame. Read from the camera's thread. */
+    static boolean frameWanted() {
+        return wantsFrame;
+    }
+
+    /**
+     * Take the next frame, or null if none has arrived.
+     *
+     * <p>Called from Rust on the decoding thread, and not declared native. Rust pulls
+     * the frame over JNI and decodes it there, so the bytes are copied once. A
+     * {@code static native byte[] nextFrame()} would copy them twice: once into the Java
+     * array, and once more into whatever Rust builds from it.
+     *
+     * <p>Clears the request as it goes, so the camera does not queue another frame
+     * until this one has been decoded.
+     */
+    static byte[] nextFrame() {
+        wantsFrame = false;
+        return frames.poll();
+    }
+
+    /** Ask for one more frame, now that the last one has been dealt with. */
+    static void wantFrame() {
+        wantsFrame = true;
+    }
 
     /** Tell Rust whether the app has gone to the background. */
     static native void reportBackground(boolean inBackground);

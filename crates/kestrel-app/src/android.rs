@@ -34,12 +34,14 @@ use jni::{signature::RuntimeMethodSignature, strings::JNIString};
 use log::{error, warn};
 
 use crate::{
+    bridge,
     permissions::Permission,
     platform::Platform,
     state::{self, Shared},
 };
 
-/// The bridge class in Java. Renaming it means changing this line too.
+/// The bridge class in Java. Renaming it means changing this line too, and the test in
+/// `bridge` will say so.
 const BRIDGE: &str = "app/kestrel/map/Bridge";
 
 /// The Android implementation of [`Platform`].
@@ -87,6 +89,55 @@ impl Android {
                 Vec::new()
             }
         })
+    }
+
+    /// Pull the next camera frame, if one has arrived.
+    ///
+    /// The one call that returns something. It goes through the same path as the rest
+    /// but with a different return type, because it runs on the decoding thread and the
+    /// bytes are decoded in Rust — going the other way would copy them twice.
+    pub fn next_frame(&self) -> Option<Vec<u8>> {
+        const NEXT: &str = "nextFrame";
+        let Some(vm) = self.vm() else { return None };
+        let class = jni::strings::JNIString::new(BRIDGE);
+        let name = jni::strings::JNIString::new(NEXT);
+        let outcome = vm.attach_current_thread(
+            |env| -> Result<Option<Vec<u8>>, jni::errors::Error> {
+                let Ok(class) = env.find_class(class.as_ref()) else {
+                    return Ok(None);
+                };
+                let signature =
+                    jni::signature::RuntimeMethodSignature::from_str("nextFrame()[B")?;
+                let value = env.call_static_method(
+                    class,
+                    name.as_ref(),
+                    signature.method_signature(),
+                    &[],
+                )?;
+                // A null means no frame has arrived yet, which is ordinary: the camera
+                // delivers about thirty a second and the decoder asks for one at a time.
+                if value.is_null() {
+                    return Ok(None);
+                }
+                // Checked cast rather than a reinterpretation: a wrong return type from
+                // Java then fails here instead of reading a string's bytes as pixels.
+                let array = jni::objects::JByteArray::cast_local(env, value.l()?)?;
+                let len = array.len(env)?;
+                let mut buffer = vec![0i8; len];
+                array.get_region(env, 0, &mut buffer)?;
+                // JNI byte arrays are signed; an NV21 byte above 127 arrives negative and
+                // would become 0xFF in any conversion. Undoing that here keeps the signed
+                // type from leaking into the decoder.
+                Ok(Some(buffer.into_iter().map(|b| b as u8).collect()))
+            },
+        );
+        match outcome {
+            Ok(frame) => frame,
+            Err(e) => {
+                warn!("could not read a camera frame: {e}");
+                None
+            }
+        }
     }
 
     /// The one place a call to Java happens.
@@ -184,20 +235,7 @@ fn ndk_context_is_ready() -> bool {
 /// at the bottom of this file checks that every method the app calls is in this
 /// table and vice versa.
 fn static_signature(name: &str) -> Option<&'static str> {
-    Some(match name {
-        "requestLocation" => "requestLocation()V",
-        "requestBackgroundLocation" => "requestBackgroundLocation()V",
-        "requestNotifications" => "requestNotifications()V",
-        "requestCamera" => "requestCamera()V",
-        "openAppSettings" => "openAppSettings()V",
-        "openLocationSettings" => "openLocationSettings()V",
-        "startSharing" => "startSharing()V",
-        "stopSharing" => "stopSharing()V",
-        "startScan" => "startScan()V",
-        "notify" => "notify(Ljava/lang/String;Ljava/lang/String;)V",
-        "setProxy" => "setProxy(Ljava/lang/String;)V",
-        _ => return None,
-    })
+    bridge::signature_of(name)
 }
 
 impl Platform for Android {
@@ -336,6 +374,61 @@ pub extern "system" fn Java_app_kestrel_map_Bridge_reportScan<'frame>(
         Ok(())
     })
     .resolve::<jni::errors::LogErrorAndDefault>();
+}
+
+/// The back gesture, from the activity.
+///
+/// Routed through Java's own method rather than straight from the activity, so every
+/// crossing goes through one class and one table.
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_app_kestrel_map_Bridge_onBackPressedNative<'frame>(
+    mut env: jni::EnvUnowned<'frame>,
+    _class: jni::objects::JClass,
+) {
+    env.with_env::<_, (), jni::errors::Error>(|_env| {
+        // Nothing consumed the gesture, so the app should close. Java is told to finish
+        // rather than being asked to press back again, which would come straight back
+        // here and loop.
+        if !crate::entry::on_back() {
+            finish_activity();
+        }
+        Ok(())
+    })
+    .resolve::<jni::errors::LogErrorAndDefault>();
+}
+
+/// Ask the platform to close this window.
+///
+/// `finish()` rather than another `backPressed()`, because this is being called *because*
+/// the back gesture went unconsumed: asking Java to press back again would call straight
+/// back into this function with the same state and never leave.
+fn finish_activity() {
+    let raw = state::shared().activity.lock().map(|a| *a).unwrap_or(0);
+    if raw == 0 {
+        return;
+    }
+    if ndk_context_is_ready() {
+        let ctx = ndk_context::android_context();
+        // SAFETY: the runtime's JavaVM pointer, valid for the life of the process.
+        let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) };
+        let _ = vm.attach_current_thread(|env| -> Result<(), jni::errors::Error> {
+            // SAFETY: `raw` was stored from `AndroidApp::activity_as_ptr`, so it is the
+            // jobject of the live activity, and it is cleared when the activity is gone.
+            // `attach_current_thread` puts this thread on the JNI stack first, which is
+            // what a local reference needs to be valid for.
+            let activity =
+                unsafe { jni::objects::JObject::from_raw(env, raw as jni::sys::jobject) };
+            let signature = jni::signature::RuntimeMethodSignature::from_str("()V")?;
+            let name = jni::strings::JNIString::new("finish");
+            env.call_method(&activity, name.as_ref(), signature.method_signature(), &[])?;
+            Ok(())
+        });
+        // The handle is dead the moment `finish` returns.
+        if let Ok(mut slot) = state::shared().activity.lock() {
+            *slot = 0;
+        }
+    }
 }
 
 /// The app is going to the background or coming back.

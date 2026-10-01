@@ -74,6 +74,16 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize">
+
+            <!--
+              The native library's name. NativeActivity loads this itself before
+              onCreate, which is why Bridge can be reached from a boot broadcast with no
+              activity in existence at all.
+            -->
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="kestrel_app" />
+
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -88,6 +98,16 @@
             android:name=".ShareService"
             android:exported="false"
             android:foregroundServiceType="location" />
+
+        <!--
+          The scanner. A plain activity rather than a window laid over the map: the
+          camera needs a surface of its own, and NativeActivity's surface is in use.
+        -->
+        <activity
+            android:name=".ScanActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.Kestrel" />
 
         <receiver
             android:name=".BootReceiver"

@@ -106,8 +106,10 @@ pub struct AppState {
     /// Whether the app is in the background, which is when sharing has to be a
     /// service rather than a foreground task.
     pub background: bool,
-    /// An invite code waiting to be joined.
-    pub pending_invite: Option<String>,
+    /// An invite code being typed in.
+    pub invite: Option<String>,
+    /// An invite code scanned from a QR code.
+    pub scanned: Option<String>,
     /// The safety number of a pending join request, and the name beside it.
     pub pending_name: Option<(String, String)>,
 }
