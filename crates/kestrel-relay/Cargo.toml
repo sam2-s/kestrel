@@ -1,6 +1,6 @@
 [package]
 name = "kestrel-relay"
-description = "Relay for the Kestrel protocol: stores ciphertext, never plaintext."
+description = "The Kestrel relay: stores ciphertext, never plaintext."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,5 +8,25 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[[bin]]
+name = "kestrel-relay"
+path = "src/main.rs"
+
 [dependencies]
 kestrel-core.workspace = true
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "macros", "signal", "time"] }
+rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
+serde.workspace = true
+serde_json.workspace = true
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi"] }
+
+[dev-dependencies]
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "macros", "time", "net"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
+http-body-util = "0.1"
+
+[lib]
+name = "kestrel_relay"
+path = "src/lib.rs"

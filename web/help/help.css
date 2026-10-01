@@ -1,0 +1,177 @@
+/* The help page. Dark first, because this is opened at night by someone
+   frightened, and light when the device asks for it. */
+
+:root {
+  --bg: #0b0f14;
+  --panel: #131a22;
+  --line: #1f2933;
+  --ink: #e6edf3;
+  --dim: #8b98a5;
+  --accent: #2dd4bf;
+  --sos: #f87171;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --radius: 14px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f8fa;
+    --panel: #ffffff;
+    --line: #dfe5ec;
+    --ink: #0f172a;
+    --dim: #5b6774;
+    --accent: #0d9488;
+    --sos: #dc2626;
+    --ok: #16a34a;
+    --warn: #b45309;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+.app {
+  position: relative;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: max(12px, env(safe-area-inset-top)) 12px
+           max(12px, env(safe-area-inset-bottom));
+  gap: 12px;
+}
+
+#map {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.sheet {
+  position: relative;
+  z-index: 1;
+  margin-top: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: grid;
+  gap: 10px;
+  max-width: 520px;
+  width: 100%;
+  margin-inline: auto;
+}
+
+.status {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--dim);
+  flex: none;
+}
+
+.status[data-status="sos"] { color: var(--sos); }
+.status[data-status="sos"]::before { background: var(--sos); animation: pulse 1.6s ease-in-out infinite; }
+.status[data-status="sharing"] { color: var(--accent); }
+.status[data-status="sharing"]::before { background: var(--accent); }
+.status[data-status="checked-in"] { color: var(--ok); }
+.status[data-status="checked-in"]::before { background: var(--ok); }
+.status[data-status="lost"] { color: var(--warn); }
+.status[data-status="lost"]::before { background: var(--warn); }
+.status[data-status="stopped"] { color: var(--dim); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(1.35); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status::before { animation: none !important; }
+}
+
+h1 { font-size: 1.15rem; margin: 0; }
+h2 { font-size: 0.95rem; margin: 0; color: var(--dim); font-weight: 600; }
+
+.where { font-size: 2.4rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.when { color: var(--dim); font-variant-numeric: tabular-nums; }
+
+.meta { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 0.9rem; }
+.meta dt { color: var(--dim); }
+.meta dd { margin: 0; }
+
+.privacy {
+  font-size: 0.8rem;
+  color: var(--dim);
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.privacy a { color: var(--dim); }
+
+.panel {
+  position: relative;
+  z-index: 1;
+  margin: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 20px;
+  max-width: 480px;
+  display: grid;
+  gap: 10px;
+}
+
+.marker {
+  position: absolute;
+  z-index: 1;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border-radius: 50%;
+  background: var(--sos);
+  border: 3px solid var(--panel);
+  box-shadow: 0 0 0 1px var(--line), 0 2px 8px rgb(0 0 0 / 0.35);
+}
+
+.marker[data-status="sharing"] { background: var(--accent); }
+.marker[data-status="checked-in"] { background: var(--ok); }
+.marker[data-status="stopped"] { background: var(--dim); }
+
+.offgrid {
+  background-image:
+    radial-gradient(560px 480px at 50% 34%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 68%),
+    radial-gradient(color-mix(in srgb, var(--dim) 16%, transparent) 1px, transparent 1.4px);
+  background-size: auto, 24px 24px, auto;
+  background-color: var(--bg);
+}
+
+.attrib {
+  position: absolute;
+  z-index: 1;
+  left: 8px;
+  bottom: max(8px, env(safe-area-inset-bottom));
+  font-size: 11px;
+  color: var(--dim);
+  background: color-mix(in srgb, var(--panel) 85%, transparent);
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.attrib:empty { display: none; }
