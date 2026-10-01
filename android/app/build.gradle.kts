@@ -39,6 +39,18 @@ android {
 
     }
 
+    signingConfigs {
+        // A debug key so `assembleRelease` produces something installable for
+        // testing. Not a release key: shipping one would mean shipping everyone's
+        // key, and the update path is unforgiving about that.
+        create("testkey") {
+            storeFile = rootProject.file("testkey.jks")
+            storePassword = "kestrel"
+            keyAlias = "kestrel"
+            keyPassword = "kestrel"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -47,6 +59,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            // Signed with the checked-in test key so `assembleRelease` produces something
+            // installable. Not a release key: shipping one means shipping everyone's, and
+            // the update path is unforgiving about that. A real release would take the key
+            // from the environment and never commit it.
+            signingConfig = signingConfigs.getByName("testkey")
         }
         debug {
             // The Rust library is built the same way in both, so a debug build tests
@@ -67,6 +84,10 @@ android {
                 "/META-INF/{AL2.0,LGPL2.1}",
                 "/META-INF/DEPENDENCIES",
                 "/META-INF/versions/9/OSGI-INF/MANIFEST.MF",
+                // Kotlin's stdlib builtins, which R8 keeps whether or not the app uses
+                // Kotlin. There is no Kotlin in Kestrel; these are ~40 KB of nothing.
+                "kotlin/**",
+                "META-INF/*.kotlin_module",
             )
         }
         // The Rust library is already stripped by the release profile.
@@ -80,17 +101,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    signingConfigs {
-        // A debug key so `assembleRelease` produces something installable for
-        // testing. Not a release key: shipping one would mean shipping everyone's
-        // key, and the update path is unforgiving about that.
-        create("testkey") {
-            storeFile = rootProject.file("testkey.jks")
-            storePassword = "kestrel"
-            keyAlias = "kestrel"
-            keyPassword = "kestrel"
-        }
-    }
 }
 
 // ---------------------------------------------------------------- the Rust build
@@ -100,71 +110,78 @@ android {
 // thing it would do here is copy one file.
 
 val rustCrate = rootProject.file("../crates/kestrel-app")
-val rustOut = layout.buildDirectory.dir("rustJniLibs")
+// One directory per profile. Sharing one would make Gradle treat the debug build's
+// output as satisfying the release task's, and ship an unstripped 94 MB library in the
+// release APK — which is exactly what happened the first time.
+val rustOutDebug = layout.buildDirectory.dir("rustJniLibs/debug")
+val rustOutRelease = layout.buildDirectory.dir("rustJniLibs/release")
 val rustTargetDir = rootProject.file("../target/android-build")
 
-/** The arm64 triple name for an ABI. One ABI, because one is all this ships. */
-fun tripleFor(abi: String): String =
-    when (abi) {
-        "arm64-v8a" -> "aarch64-linux-android"
-        else -> error("Kestrel does not build for $abi; see abiFilters")
-    }
+/** The one ABI this ships. A 32-bit build would add ~3 MB of the same code twice. */
+val ABI = "arm64-v8a"
 
-fun cargoBuild(abi: String, release: Boolean) {
-    val profile = if (release) "release" else "debug"
-    val out = rustOut.get().asFile.resolve(abi)
-    out.mkdirs()
-    providers.exec {
-        workingDir = rustCrate.parentFile.parentFile
+/**
+ * One cargo build, as an `Exec` task.
+ *
+ * An `Exec` rather than a `doLast` that shells out: the configuration cache cannot
+ * serialise a build script object, so a closure holding one fails the build. `Exec`
+ * carries nothing but strings, which is exactly what a cargo invocation needs.
+ */
+fun cargoBuild(name: String, release: Boolean) =
+    tasks.register<Exec>(name) {
+        description = "Compiles the Rust app for arm64, " +
+            (if (release) "stripped." else "unoptimised.")
+        // cargo-ndk already appends the ABI directory itself, so this is a jniLibs root
+        // and nothing more. Adding the ABI here nests it twice and AGP then finds no .so
+        // where it expects one — a 29 KB APK with no library in it.
+        val out = if (release) rustOutRelease else rustOutDebug
+        val outDir = out.get().asFile
+        val manifest = rustCrate.resolve("Cargo.toml").absolutePath
+        val workDir = rustCrate.parentFile.parentFile
+        val profile = if (release) "release" else "debug"
+        workingDir = workDir
+        // cargo-ndk takes its own options first, then everything after is passed to
+        // cargo — so the subcommand and --release have to come last or cargo rejects them
+        // as unknown arguments to itself. The platform matches minSdk, so the library is
+        // not built against a lower API than the app declares.
         commandLine(
             listOf(
                 "cargo", "ndk",
-                "-t", abi,
-                "-o", out.absolutePath,
-                *(if (release) arrayOf("--release") else arrayOf("--debug")),
+                "-t", ABI,
+                "-P", "26",
+                "-o", outDir.absolutePath,
+                "--manifest-path", manifest,
+                "build",
+                *(if (release) arrayOf("--release") else emptyArray()),
                 "--target-dir", rustTargetDir.absolutePath,
-                "--manifest-path", rustCrate.resolve("Cargo.toml").absolutePath,
             ),
         )
-    }.result.get().let { result ->
-        // A failed cargo build must fail the Gradle build. Left unchecked, the missing
-        // .so would not show up until an install on a real phone.
-        if (result.exitValue != 0) {
-            throw GradleException("cargo ndk build failed (exit ${result.exitValue})")
+        // Declared up front so a source edit re-runs this and a comment edit does not.
+        inputs.file(manifest)
+        inputs.dir(rustCrate.resolve("src")).withPathSensitivity(PathSensitivity.RELATIVE)
+        outputs.dir(out)
+    }
+
+val buildRustDebug = cargoBuild("buildRustDebug", release = false)
+val buildRustRelease = cargoBuild("buildRustRelease", release = true)
+
+// Each variant gets the output of the matching cargo build, and nothing else. Putting
+// both on the source set looks harmless and is not: AGP sees the same
+// `lib/arm64-v8a/libkestrel_app.so` twice and fails on duplicate resources — or worse,
+// picks the debug one and ships an unstripped 94 MB library.
+androidComponents {
+    onVariants { variant ->
+        val isRelease = variant.buildType == "release"
+        val dir = (if (isRelease) rustOutRelease else rustOutDebug).get().asFile.absolutePath
+        val build = if (isRelease) buildRustRelease else buildRustDebug
+        variant.sources.jniLibs?.addStaticSourceDirectory(dir)
+        tasks.configureEach {
+            if (name.contains("Merge") && name.contains("JniLibFolders")) {
+                // Only the merge needs the library to exist, so an unrelated resource
+                // task does not trigger a five-minute Rust compile.
+                dependsOn(build)
+            }
         }
     }
 }
 
-// Registered per build type rather than once, because the release flag changes what
-// cargo is asked for and a single task cannot have two meanings.
-val buildRustDebug = tasks.register("buildRustDebug") {
-    description = "Compiles the Rust app for arm64, unoptimised."
-    inputs.file(rustCrate.resolve("Cargo.toml"))
-    inputs.dir(rustCrate.resolve("src"))
-    outputs.dir(rustOut)
-    doLast { cargoBuild("arm64-v8a", release = false) }
-}
-
-val buildRustRelease = tasks.register("buildRustRelease") {
-    description = "Compiles the Rust app for arm64, stripped."
-    inputs.file(rustCrate.resolve("Cargo.toml"))
-    inputs.dir(rustCrate.resolve("src"))
-    outputs.dir(rustOut)
-    doLast { cargoBuild("arm64-v8a", release = true) }
-}
-
-// AGP's own native build is off: it has no CMakeLists to run, and enabling it would
-// only add a step that fails.
-android {
-    sourceSets.getByName("main") {
-        jniLibs.directories.add(rustOut.get().asFile.absolutePath)
-    }
-}
-
-tasks.withType<com.android.build.gradle.tasks.MergeSourceSetFolders>().configureEach {
-    // Only the merge needs the library to exist; leaving the rest undepended on keeps
-    // lint and resource tasks fast.
-    if (name.contains("JniLibFolders")) {
-        dependsOn(buildRustDebug, buildRustRelease)
-    }
-}
