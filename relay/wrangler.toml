@@ -1,12 +1,11 @@
-name = "starling"
+name = "kestrel"
 main = "src/index.js"
 compatibility_date = "2026-08-01"
 
-# The canonical origin. Binding the apex to the Worker auto-creates the DNS
-# record and provisions the TLS cert. The workers.dev URL keeps working too.
-[[routes]]
-pattern = "starlingmap.app"
-custom_domain = true
+# A custom domain is not committed here: deploy.sh writes the block when you
+# run it with ROUTE=your.domain, and removes it again when you do not, so the
+# committed file never points a deploy at a domain the runner does not own.
+# Without a route the workers.dev subdomain answers.
 
 [assets]
 directory = "../app"
@@ -52,5 +51,5 @@ RATE_GET_MIN = "240"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "starling"
-database_id = "acca9e46-0fa4-400e-8e79-830c111ece87"
+database_name = "kestrel"
+database_id = ""

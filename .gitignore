@@ -9,7 +9,7 @@ app/vendor
 
 # Signed release artifacts, produced by tools/release-android.sh.
 dist/
-app/starling.apk
+app/kestrel.apk
 .claude/
 
 # The plain-server relay's default SQLite database and its WAL/SHM siblings.

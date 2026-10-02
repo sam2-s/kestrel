@@ -1,5 +1,5 @@
 #!/bin/bash
-# One-command deploy for Starling: the relay worker plus the app as static
+# One-command deploy for Kestrel: the relay worker plus the app as static
 # assets, on one Cloudflare Worker. Idempotent, safe to re-run.
 #
 # Needs a Cloudflare API token with Workers Scripts:Edit, D1:Edit, and
@@ -8,11 +8,21 @@
 #   or run `wrangler login` first       (interactive browser auth)
 #
 #   bash deploy.sh
+#
+# Everything below can be overridden, so the same script deploys for someone
+# else's account and domain without editing it:
+#   WORKER=kestrel            Worker and script name
+#   DB=<name>                 D1 database name; defaults to $WORKER
+#   ROUTE=relay.example.org   route a custom domain at the Worker; when
+#                             unset the workers.dev subdomain is used
+#   APK_URL=<url>             where the staged /kestrel.apk download comes
+#                             from when dist/kestrel.apk has not been built
 set -euo pipefail
 cd "$(dirname "$0")"
 
-WORKER=starling
-DB=starling
+WORKER=${WORKER:-kestrel}
+DB=${DB:-$WORKER}
+ROUTE=${ROUTE:-}
 W=(npx --yes wrangler@latest)
 
 # The vendor directory is generated from npm, never committed; a deploy from
@@ -39,32 +49,42 @@ fi
 [ -n "$DBID" ] || { echo "could not resolve the D1 database id"; exit 1; }
 echo "D1 $DB = $DBID"
 
-# Pin the id into wrangler.toml so the binding resolves on deploy.
-python3 - "$DBID" <<'PY'
+# Pin the name, database and optional route into wrangler.toml so the deploy
+# resolves against this account. Rewriting to the same values is a no-op, so
+# a rerun leaves no diff.
+python3 - "$DBID" "$WORKER" "$DB" "$ROUTE" <<'PY'
 import re, sys
-p = "wrangler.toml"
-s = open(p).read()
-s = re.sub(r'database_id = ".*"', f'database_id = "{sys.argv[1]}"', s)
-open(p, "w").write(s)
+dbid, worker, db, route = sys.argv[1:5]
+s = open("wrangler.toml").read()
+s = re.sub(r'^name = "[^"]*"', f'name = "{worker}"', s, count=1, flags=re.M)
+s = re.sub(r'^database_name = "[^"]*"', f'database_name = "{db}"', s, count=1, flags=re.M)
+s = re.sub(r'^database_id = "[^"]*"', f'database_id = "{dbid}"', s, count=1, flags=re.M)
+s = re.sub(r'\[\[routes\]\]\npattern = "[^"]*"\ncustom_domain = true\n', "", s)
+if route:
+    s += f'\n[[routes]]\npattern = "{route}"\ncustom_domain = true\n'
+open("wrangler.toml", "w").write(s)
 PY
 
 echo "== 2/4 schema =="
 "${W[@]}" d1 execute "$DB" --remote --yes --file schema.sql
 
 echo "== 3/4 deploy =="
-# Stage the signed APK as a first-party download at /starling.apk for this
+# Stage the signed APK as a first-party download at /kestrel.apk for this
 # deploy only. Phone download managers regularly choke on GitHub's two-hop
 # redirect to a third-party signed URL; same-origin with a plain 200 does not.
 # The repo never tracks the binary (gitignored), so a checkout without a
 # built dist falls back to the latest release.
-if [ -f ../dist/starling.apk ]; then
-  cp ../dist/starling.apk ../app/starling.apk
+if [ -n "${APK_URL:-}" ]; then
+  curl -fsSL -o ../app/kestrel.apk "$APK_URL" \
+    || { echo "APK_URL fetch failed"; rm -f ../app/kestrel.apk; }
+elif [ -f ../dist/kestrel.apk ]; then
+  cp ../dist/kestrel.apk ../app/kestrel.apk
 else
-  curl -fsSL -o ../app/starling.apk \
-    https://github.com/munzzyy/starling/releases/latest/download/starling.apk \
-    || { echo "no dist/starling.apk and the release fetch failed"; rm -f ../app/starling.apk; }
+  curl -fsSL -o ../app/kestrel.apk \
+    https://github.com/sam2-s/kestrel/releases/latest/download/kestrel.apk \
+    || { echo "no dist/kestrel.apk and the release fetch failed"; rm -f ../app/kestrel.apk; }
 fi
-trap 'rm -f ../app/starling.apk' EXIT
+trap 'rm -f ../app/kestrel.apk' EXIT
 "${W[@]}" deploy
 
 echo "== 4/4 health check =="

@@ -216,7 +216,7 @@ test("the worker answers only the app shell from cache, not other pages", async 
   assert.equal(await answerNavigation("/?demo=1"), "cache");
   assert.equal(await answerNavigation("/privacy"), "network");
   assert.equal(await answerNavigation("/privacy.html"), "network");
-  assert.equal(await answerNavigation("/starling.apk"), "network");
+  assert.equal(await answerNavigation("/kestrel.apk"), "network");
   assert.equal(await answerNavigation("/help"), null);
   assert.equal(await answerNavigation("/privacy", { online: false }), "cache");
 });

@@ -40,11 +40,24 @@ the relay if your circle only needs the Android app.
 - A domain or subdomain with a certificate: an existing site's certificate,
   Let's Encrypt, your own CA if your circle already trusts it.
 
+### On a LAN with no public domain
+
+The https-only rule has teeth on a home network: a phone pointed at
+`http://192.168.1.20:8788` refuses the URL before sending anything, so a
+plain LAN relay is never a valid target. Three ways to keep the rule and
+still stay on the LAN: install a CA you created on each phone and give the
+relay a name or IP it signs for (tools like `mkcert` do exactly this); use
+a mesh VPN that hands out certificates for its own names, such as
+Tailscale's `*.ts.net`; or publish the relay under a real domain with
+Let's Encrypt, which is what the Apache and nginx examples below assume.
+The health endpoint answers the same either way, so
+`curl https://<relay>/api/v2/health` is the check once TLS is in place.
+
 ## Install and run
 
 ```
 git clone https://github.com/sam2-s/kestrel.git
-cd starling
+cd kestrel
 npm ci
 node relay/server.mjs
 ```
@@ -79,18 +92,18 @@ possibly missing the last few seconds of writes.
 A systemd unit, adjust the paths and user:
 
 ```ini
-# /etc/systemd/system/starling-relay.service
+# /etc/systemd/system/kestrel-relay.service
 [Unit]
 Description=Kestrel relay
 After=network.target
 
 [Service]
 Type=simple
-User=starling
-WorkingDirectory=/opt/starling
+User=kestrel
+WorkingDirectory=/opt/kestrel
 Environment=PORT=8788
 Environment=HOST=127.0.0.1
-Environment=KESTREL_DB_PATH=/var/lib/starling/relay.db
+Environment=KESTREL_DB_PATH=/var/lib/kestrel/relay.db
 Environment=TRUST_PROXY=1
 Environment=PUBLIC_ORIGIN=https://relay.example.org
 ExecStart=/usr/bin/node relay/server.mjs
@@ -98,7 +111,7 @@ Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/starling
+ReadWritePaths=/var/lib/kestrel
 PrivateTmp=true
 
 [Install]
@@ -106,9 +119,9 @@ WantedBy=multi-user.target
 ```
 
 ```
-sudo mkdir -p /var/lib/starling && sudo chown starling:starling /var/lib/starling
+sudo mkdir -p /var/lib/kestrel && sudo chown kestrel:kestrel /var/lib/kestrel
 sudo systemctl daemon-reload
-sudo systemctl enable --now starling-relay
+sudo systemctl enable --now kestrel-relay
 ```
 
 ## Client IP behind a reverse proxy: `TRUST_PROXY`
@@ -210,7 +223,7 @@ backup restores very little that is still current.
 ```
 git pull
 npm ci
-sudo systemctl restart starling-relay   # or however you run it
+sudo systemctl restart kestrel-relay   # or however you run it
 ```
 
 The schema (`relay/schema.sql`) is applied on every start, the same file

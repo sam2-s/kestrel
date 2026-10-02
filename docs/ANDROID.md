@@ -138,12 +138,14 @@ has none of these caveats, which is why both paths are supported.
 
 ## Custom relay
 
-Both the web app and the Android wrapper have a relay address setting.
-Default is `https://starlingmap.app`. Anyone running their own relay
-(`relay/` in this repo, deployed with `relay/deploy.sh`) can point their
-client at it instead. This is the mechanism that keeps Kestrel out of
-F-Droid's "tethered to a specific server" anti-feature category: using our
-relay is a default, not a requirement.
+The Android wrapper has a relay address setting: paste in your relay's
+https address and hit Apply. The web build has no such field; it always
+talks to the origin serving it. Default is `https://starlingmap.app`.
+Anyone running their own relay (`relay/` in this repo, deployed with
+`relay/deploy.sh`) can point their client at it instead. The relay the
+app ships as a default is a default, not a requirement: nothing in the
+client is tethered to a specific server, and saving a new relay tells you
+on the spot whether it answers.
 
 ## Your own server
 
@@ -180,11 +182,8 @@ first-class target rather than an afterthought:
   installed.
 - The WebView requirement (137 or newer, see below) is met by GrapheneOS's
   own Vanadium, which tracks current Chromium.
-- Install paths that do not touch Google: F-Droid
-  (<https://f-droid.org/packages/app.kestrel.map/>, the same developer-signed
-  APK after its reproducible-build check), or add it to Tern
-  (<https://tern.munzzyy.dev>), which follows the GitHub releases
-  page; every release carries a stable `starling.apk` asset name for that.
+- Install paths that do not touch Google: the signed `kestrel.apk` from the
+  GitHub releases page, which every release carries under that stable name.
 - GrapheneOS's per-app Network and Sensors toggles degrade the app the way
   you would hope: no network means the poller backs off and the Off-grid
   basemap still renders; denying location just means nothing to share.

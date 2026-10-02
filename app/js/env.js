@@ -147,6 +147,28 @@ export function normalizeRelay(value) {
   return u.origin + (path === "" || path === "/" ? "" : path);
 }
 
+// Ask a candidate relay whether it answers, right after its address has been
+// saved. Without this the first sign of a typo'd URL is a long minute of
+// polling failures with nothing pointing at the cause. The
+// health endpoint needs no keys and no channel, so it is the cheapest true
+// signal that the same code path is listening. Reachable is advisory both
+// ways: a relay that is down for a minute, or a phone with no signal, still
+// deserves to keep the value that was just typed.
+export async function relayReachable(base, timeoutMs = 4000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${base}/api/v2/health`, { signal: ctrl.signal, cache: "no-store" });
+    if (!res.ok) return false;
+    const body = await res.json();
+    return body?.ok === true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // The API base is set once at boot, before any poller or sender exists.
 // "" means same-origin (the web default).
 let apiBase = null;

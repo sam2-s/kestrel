@@ -257,6 +257,7 @@ export const fr = {
   "Reject": "Refuser",
   "Relay": "Relais",
   "Relay saved. It applies the next time Kestrel starts.": "Relais enregistré. Il s'applique au prochain démarrage de Kestrel.",
+  "Could not reach {host} right now.": "Impossible de joindre {host} pour l'instant.",
   "Relock after the app has been in the background this long. Locking ends a share unless Keep sharing when the app is closed is on.": "Reverrouille après ce temps passé en arrière-plan. Le verrouillage met fin au partage, sauf si « Continuer le partage quand l'application est fermée » est activé.",
   "Remove": "Retirer",
   "Remove duress passcode": "Supprimer le code de contrainte",

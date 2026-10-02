@@ -107,7 +107,7 @@ import {
 } from "./lock.js";
 import { createPlaceTracker, sanitizePlaces, newPlaceId, fenceSnap, announces, DEFAULT_RADIUS } from "./places.js";
 import { DUE_GRACE_MS, DUE_WARN_MS, overdue, storedTimer, warnDue } from "./checkin.js";
-import { debugHooks, apiUrl, customRelayInUse, isWrapped, isBundled, native, pageShown, shareUrlBase, normalizeRelay, normalizeForward, normalizeForwardTid, setApiBase, shareCapable } from "./env.js";
+import { debugHooks, apiUrl, customRelayInUse, isWrapped, isBundled, native, pageShown, shareUrlBase, normalizeRelay, normalizeForward, normalizeForwardTid, setApiBase, shareCapable, relayReachable } from "./env.js";
 import {
   isSealedRecordError,
   GEN_SLOT,
@@ -3651,7 +3651,17 @@ async function saveStartRelay(value) {
   }
   await adoptRelay(norm || "");
   ui.toast(norm ? t("Kestrel will use {host}.", { host: new URL(norm).host }) : "Kestrel will use the default relay.");
+  if (norm) warnIfRelaySilent(norm);
   return true;
+}
+
+// The setting is already saved when this runs, so the probe can only add a
+// warning, never refuse: an unreachable relay may be a typo, or may just be
+// down, and the next start will use whatever was saved either way.
+function warnIfRelaySilent(base) {
+  relayReachable(base).then((ok) => {
+    if (!ok) ui.toast(t("Could not reach {host} right now.", { host: new URL(base).host }), "warn");
+  });
 }
 
 function promptStartRelay() {
@@ -4953,6 +4963,7 @@ async function onSettingChange(key, value) {
     if (norm) await dbSet("relay", norm);
     else await dbDel("relay");
     ui.toast("Relay saved. It applies the next time Kestrel starts.");
+    if (norm) warnIfRelaySilent(norm);
   } else if (key === "tor") {
     try {
       native()?.setTor(!!value);

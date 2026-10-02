@@ -327,6 +327,7 @@ export const pt = {
   "Reject": "Recusar",
   "Relay": "Relay",
   "Relay saved. It applies the next time Kestrel starts.": "Relay salvo. Vale a partir da próxima vez que o Kestrel abrir.",
+  "Could not reach {host} right now.": "Não foi possível alcançar {host} agora mesmo.",
   "Relock after the app has been in the background this long. Locking ends a share unless Keep sharing when the app is closed is on.": "Bloqueia de novo depois que o app ficar em segundo plano por esse tempo. O bloqueio encerra o compartilhamento, a menos que Continuar compartilhando com o app fechado esteja ligado.",
   "Remove": "Remover",
   "Remove {name}": "Remover {name}",
