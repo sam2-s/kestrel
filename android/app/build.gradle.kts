@@ -173,15 +173,22 @@ androidComponents {
     onVariants { variant ->
         val isRelease = variant.buildType == "release"
         val dir = (if (isRelease) rustOutRelease else rustOutDebug).get().asFile.absolutePath
-        val build = if (isRelease) buildRustRelease else buildRustDebug
         variant.sources.jniLibs?.addStaticSourceDirectory(dir)
-        tasks.configureEach {
-            if (name.contains("Merge") && name.contains("JniLibFolders")) {
-                // Only the merge needs the library to exist, so an unrelated resource
-                // task does not trigger a five-minute Rust compile.
-                dependsOn(build)
-            }
-        }
+    }
+}
+
+// Only the merge needs the library to exist, so an unrelated resource task does not
+// trigger a five-minute Rust compile. Registered outside `onVariants`: registering it
+// per variant makes every merge depend on every build, so assembling a release compiles
+// the debug library too.
+//
+// The task name is `mergeReleaseJniLibFolders` with a lowercase `merge`, which is why
+// this checked for "Merge" and never matched — and why an edited crate shipped a day-old
+// .so, because cargo was never asked to rebuild it.
+tasks.configureEach {
+    if (name.contains("merge") && name.contains("JniLibFolders")) {
+        val build = if (name.contains("Release")) buildRustRelease else buildRustDebug
+        dependsOn(build)
     }
 }
 
