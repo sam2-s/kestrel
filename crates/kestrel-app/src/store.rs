@@ -17,6 +17,9 @@ use kestrel_core::seal::random_bytes;
 
 use crate::state::now_ms;
 
+/// Re-exported so callers do not have to know which module the clock lives in.
+pub use crate::state::now_ms as wall_clock;
+
 /// Where everything lives.
 ///
 /// One directory under the app's private storage. Android already scopes that to this
@@ -221,7 +224,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return None;
     }
     let bytes = s.as_bytes();
@@ -266,10 +269,7 @@ pub struct Settings {
 
 /// Read the settings, or the defaults.
 pub fn load_settings() -> Settings {
-    match read(&settings_path()).and_then(|b| serde_json::from_slice(&b).ok()) {
-        Some(s) => s,
-        None => Settings::default(),
-    }
+    read(&settings_path()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
 /// Save the settings.
@@ -364,10 +364,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_settings_file_round_trips() {
+        // Somewhere to check the shape of what is written. Not run against the real
+        // directory: this is about the fields, and the paths belong to the platform.
+        let settings = Settings {
+            name: "Ada".into(),
+            basemap: 1,
+            tor: false,
+            follow: true,
+            beacon: None,
+        };
+        let bytes = serde_json::to_vec(&settings).unwrap();
+        let back: Settings = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(back.name, "Ada");
+        assert!(back.follow);
+        assert!(!back.tor);
+    }
+
+    #[test]
     fn backup_is_off() {
-        // The single most consequential constant in the app, so it is a test and not
-        // only a manifest entry.
-        assert!(!BACKUP_ALLOWED);
+        // The single most consequential constant in the app. Checked as a `const`
+        // block so it is a compile error rather than a test someone can delete: flipping
+        // this to true would still leave every other test green.
+        const { assert!(!BACKUP_ALLOWED) };
     }
 
     #[test]

@@ -10,7 +10,7 @@
 //! trait.
 
 use kestrel_core::{
-    identity::Identity,
+    identity::{Identity, StoredIdentity},
     invite::{self, Invite},
     msg::{self, ShareMode},
     seal::random_bytes,
@@ -21,6 +21,7 @@ use kestrel_core::{
 use crate::{
     platform::Platform,
     state::Fix,
+    state::now_ms,
     store::{self, INVITE_TTL_MS},
 };
 
@@ -394,12 +395,50 @@ pub fn create_circle(
     let seed = random_bytes::<32>();
     let identity = Identity::generate();
     let circle = Circle::create(identity, &seed, now);
+
+    // The identity first, then the seed. Interrupted between the two, the worst case is
+    // an identity with no circle behind it, which is discarded and minted afresh next
+    // time. The other order leaves a seed that no identity can use, and the app cannot
+    // tell that from a first run.
+    let stored = serde_json::to_vec(&StoredIdentity::from_identity(circle.identity()))
+        .map_err(std::io::Error::other)?;
+    store::write_private(&store::identity_path(), &stored)?;
     save_seed(&seed, None)?;
+
     let mut settings = store::load_settings();
     settings.name = name.to_string();
     store::save_settings(&settings)?;
     platform.notify("Kestrel", "Your circle is ready. Add someone to share with.");
     Ok(circle)
+}
+
+/// Restore the circle this device created, or `None` on a first run.
+///
+/// A file that will not parse is treated as no circle rather than as an error. The seed
+/// and the identity are both unrecoverable if either is lost, so a partial write cannot
+/// be repaired and the only useful thing to do is start again.
+pub fn restore_circle(passcode: Option<&str>) -> Option<Circle> {
+    let seed = load_seed(passcode)?;
+    if !circle_is_persistable(&seed) {
+        return None;
+    }
+    let identity = restore_identity()?;
+    Some(Circle::create(identity, &seed, now_ms()))
+}
+
+/// This device's stored identity.
+pub fn restore_identity() -> Option<Identity> {
+    let bytes = store::read(&store::identity_path())?;
+    let stored: StoredIdentity = serde_json::from_slice(&bytes).ok()?;
+    stored.to_identity()
+}
+
+/// Whether this looks like a first run.
+///
+/// True when there is no seed, or a seed that no stored identity can use. Anything else
+/// would open the map on a circle the app cannot actually post to.
+pub fn is_first_run() -> bool {
+    !store::has_circle() || restore_identity().is_none()
 }
 
 /// Mint an invitation for someone new.

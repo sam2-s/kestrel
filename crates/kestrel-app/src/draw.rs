@@ -55,7 +55,6 @@ impl<'a> Map<'a> {
             // a tile server. A grid is more honest than a map that is not there: it says
             // "relative distances only", and the rings carry the scale.
             self.paint_grid(painter, rect);
-            return;
         }
         // Tiles are fetched and composited by the platform's image loader, keyed by the
         // URL the map module produced. Here they are only the background: whatever has
@@ -154,7 +153,7 @@ impl<'a> Map<'a> {
         let radius = 6.0 * self.dpr * (0.6 + 0.4 * marker.freshness);
         // A stale marker is dimmer rather than smaller: shrinking it would make a
         // three-hour-old position hard to see, and the person is still there.
-        let mut colour = hue_colour(marker.hue, 0.35 + 0.65 * marker.freshness as f32);
+        let mut colour = hue_colour(marker.hue, 0.35 + 0.65 * marker.freshness);
         if marker.stopped {
             colour = Color32::from_gray(110);
         }
@@ -598,7 +597,7 @@ mod tests {
             assert!(step.x <= previous_step, "the fling sped up");
             previous_step = step.x;
             offset += step;
-            velocity = velocity * fling_remaining(1.0 / 60.0);
+            velocity *= fling_remaining(1.0 / 60.0);
         }
         assert!(velocity.x < 1.0, "the fling was still moving after 400 frames");
         assert!(offset.x < 800.0, "a fling travelled further than it was thrown");

@@ -5,6 +5,7 @@
 //! difference is deliberate — a permission state machine and a tile request are
 //! both worth testing, and neither needs a phone.
 
+pub mod alerts;
 pub mod bridge;
 pub mod draw;
 pub mod logic;
