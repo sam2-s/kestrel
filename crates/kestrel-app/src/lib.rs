@@ -8,6 +8,7 @@
 pub mod alerts;
 pub mod bridge;
 pub mod draw;
+pub mod engine;
 pub mod logic;
 pub mod map;
 pub mod permissions;

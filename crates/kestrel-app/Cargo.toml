@@ -19,6 +19,9 @@ egui = { version = "0.36", default-features = false }
 kestrel-core.workspace = true
 kestrel-net.workspace = true
 sha2.workspace = true
+# `sync` alone, for the mutex the network sink holds across an await. No runtime: the
+# share loop is driven by eframe's frame loop, not by a task of its own.
+tokio = { version = "1", default-features = false, features = ["sync"] }
 serde.workspace = true
 serde_json.workspace = true
 zeroize.workspace = true
