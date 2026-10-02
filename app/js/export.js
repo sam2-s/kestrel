@@ -17,7 +17,7 @@ export function buildDataExport(src) {
     verified: !!r.verified,
   }));
   return {
-    app: "starling",
+    app: "kestrel",
     exported: new Date(src.now ?? Date.now()).toISOString(),
     profile: {
       name: src.profile?.name || null,
@@ -29,8 +29,8 @@ export function buildDataExport(src) {
     people,
     ownServer: src.forwardHost ? { host: src.forwardHost } : null,
     note:
-      "This is every category of data Starling keeps about you, held only on your device. " +
-      "Positions are not in it because Starling does not store them: points live in memory and die with the session. " +
+      "This is every category of data Kestrel keeps about you, held only on your device. " +
+      "Positions are not in it because Kestrel does not store them: points live in memory and die with the session. " +
       "No keys are in it, on purpose: keys never leave the device, not even into your own export.",
   };
 }

@@ -1,7 +1,11 @@
 # Changelog
 
-All notable changes to Starling are recorded here. Versions follow
-[semantic versioning](https://semver.org).
+Recorded here is the release history of the code this fork inherited: the
+upstream Starling releases, described as they shipped there. Kestrel's own
+releases live on the
+[GitHub releases page](https://github.com/sam2-s/kestrel/releases), starting
+with the rename on top of Starling 0.16.0. Versions in the history below
+follow [semantic versioning](https://semver.org).
 
 ## [0.16.0]
 

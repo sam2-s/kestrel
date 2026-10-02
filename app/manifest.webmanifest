@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Starling",
-  "short_name": "Starling",
-  "description": "Starling's landing page and live demo. Location sharing itself lives in the Starling Android app.",
+  "name": "Kestrel",
+  "short_name": "Kestrel",
+  "description": "Kestrel's landing page and live demo. Location sharing itself lives in the Kestrel Android app.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -29,7 +29,7 @@
       "purpose": "maskable"
     },
     {
-      "src": "/icons/starling.svg",
+      "src": "/icons/kestrel.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"

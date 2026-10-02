@@ -21,7 +21,7 @@ const add = (s) => {
   // Language-invariant strings: the product name plus a version number is
   // the same in every catalog and would otherwise demand a fake entry per
   // release.
-  if (/^Starling [0-9][0-9.]*$/.test(n)) return;
+  if (/^Kestrel [0-9][0-9.]*$/.test(n)) return;
   keys.add(n);
 };
 

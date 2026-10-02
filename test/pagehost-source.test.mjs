@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const kt = (name) =>
-  readFileSync(new URL(`../android/app/src/main/kotlin/app/starlingmap/${name}`, import.meta.url), "utf8");
+  readFileSync(new URL(`../android/app/src/main/kotlin/app/kestrel/map/${name}`, import.meta.url), "utf8");
 
 test("pushes into the page go through the main handler, not View.post", () => {
   const src = kt("PageHost.kt");
@@ -37,5 +37,5 @@ test("a still phone still wakes the page: a listener with no distance filter, on
   assert.match(src, /removeUpdates\(heartbeat\)/);
   assert.match(src, /private const val HEARTBEAT_MS = 15000L/);
   assert.match(src, /coerceIn\(HEARTBEAT_MS, HEARTBEAT_MAX_MS\)/, "the page's number is held to the floor and the ceiling");
-  assert.match(kt("StarlingBridge.kt"), /fun setShareCadence\(seconds: Int\) = LocationService\.setCadence\(seconds\)/);
+  assert.match(kt("KestrelBridge.kt"), /fun setShareCadence\(seconds: Int\) = LocationService\.setCadence\(seconds\)/);
 });

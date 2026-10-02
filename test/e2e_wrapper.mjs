@@ -1,5 +1,5 @@
 // The installed app is the app, not the website. This drives the REAL page in
-// headless Chromium twice over CDP: once with window.StarlingNative injected
+// headless Chromium twice over CDP: once with window.KestrelNative injected
 // before any page script runs (exactly what the Android WebView's
 // addJavascriptInterface does), once bare. Inside the wrapper the marketing
 // sections must be gone from the DOM entirely and the one link out to the
@@ -33,7 +33,7 @@ function check(name, cond, detail = "") {
   }
 }
 
-const BRIDGE_STUB = `window.StarlingNative = {
+const BRIDGE_STUB = `window.KestrelNative = {
   platform: () => "android",
   version: () => "e2e",
   torSupported: () => false,
@@ -103,7 +103,7 @@ async function bootAndRead(c, { wrapper }) {
   await c.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await c.send("Page.navigate", { url: BASE + "/" });
   await waitFor(
-    () => c.evalJs("!!window.__starlingApi && !document.getElementById('screen-onboarding').hidden"),
+    () => c.evalJs("!!window.__kestrelApi && !document.getElementById('screen-onboarding').hidden"),
     "onboarding on screen",
   );
   return c.evalJs(`(() => {
@@ -118,14 +118,14 @@ async function bootAndRead(c, { wrapper }) {
       aboutHref: document.getElementById("about-site")?.getAttribute("href") ?? null,
       createShown: !document.querySelector('[data-testid="onboarding-create"]').hidden,
       demoShown: !document.querySelector('[data-testid="onboarding-demo"]').hidden,
-      errs: (window.__starlingErrors || []).slice(0, 5),
+      errs: (window.__kestrelErrors || []).slice(0, 5),
     };
   })()`);
 }
 
 async function readCredit(c) {
   await c.evalJs(`document.querySelector('[data-testid="onboarding-demo"]').click()`);
-  await waitFor(() => c.evalJs("window.__starlingApi.state.demo === true"), "demo running");
+  await waitFor(() => c.evalJs("window.__kestrelApi.state.demo === true"), "demo running");
   await c.evalJs(`document.querySelector('[data-testid="settings-open"]').click()`);
   return waitFor(
     () => c.evalJs(`(() => {
@@ -144,7 +144,7 @@ async function main() {
   const profile = mkdtempSync(path.join(tmpdir(), "starling-wrapper-e2e-"));
   const server = spawn("node", [path.join(ROOT, "test", "serve_local.mjs"), String(HTTP_PORT)], {
     cwd: ROOT,
-    env: { ...process.env, STARLING_TEST: "1", RATE_POST_MIN: "100000", RATE_GET_MIN: "100000" },
+    env: { ...process.env, KESTREL_TEST: "1", RATE_POST_MIN: "100000", RATE_GET_MIN: "100000" },
     stdio: "ignore",
   });
   const chromium = spawn(
@@ -188,7 +188,7 @@ async function main() {
     check(
       "wrapper: the credit links leave the app instead of navigating it",
       credit.links.join("|") ===
-        "Munzzyy https://github.com/munzzyy _blank noopener noreferrer|Source code https://github.com/munzzyy/starling _blank noopener noreferrer",
+        "Munzzyy https://github.com/munzzyy _blank noopener noreferrer|Source code https://github.com/sam2-s/kestrel _blank noopener noreferrer",
       credit.links.join("|"),
     );
     wrap.close();
@@ -204,7 +204,7 @@ async function main() {
     // The demo tours Places with invented spots: two rings, off-grid, banner up.
     await web.send("Page.navigate", { url: BASE + "/?demo=1" });
     await waitFor(
-      () => web.evalJs("!!window.__starlingApi && window.__starlingApi.state.demo === true"),
+      () => web.evalJs("!!window.__kestrelApi && window.__kestrelApi.state.demo === true"),
       "demo running",
     );
     await waitFor(
@@ -215,7 +215,7 @@ async function main() {
       offgrid: document.getElementById("map").classList.contains("offgrid"),
       banner: !document.getElementById("banner-demo").hidden,
       tags: [...document.querySelectorAll(".place-tag")].map((t) => t.textContent).sort().join(","),
-      errs: (window.__starlingErrors || []).slice(0, 5),
+      errs: (window.__kestrelErrors || []).slice(0, 5),
     }))()`);
     check("demo: forced off-grid with the banner up", demoState.offgrid && demoState.banner);
     check("demo: the invented places are Home and The fountain", demoState.tags === "Home,The fountain", demoState.tags);
@@ -232,14 +232,14 @@ async function main() {
     await esTab.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
     await esTab.send("Page.navigate", { url: BASE + "/" });
     await waitFor(
-      () => esTab.evalJs("!!window.__starlingApi && !document.getElementById('screen-onboarding').hidden"),
+      () => esTab.evalJs("!!window.__kestrelApi && !document.getElementById('screen-onboarding').hidden"),
       "es onboarding on screen",
     );
     const esState = await esTab.evalJs(`(() => ({
       lang: document.documentElement.lang,
       create: document.querySelector('[data-testid="onboarding-create"]').textContent,
       tagline: document.querySelector("#screen-onboarding .ob-tagline").textContent,
-      errs: (window.__starlingErrors || []).slice(0, 3),
+      errs: (window.__kestrelErrors || []).slice(0, 3),
     }))()`);
     check("es: document language follows the system", esState.lang === "es", esState.lang);
     check("es: the start screen speaks Spanish", esState.create === "Crear un círculo" && esState.tagline === "Tu gente, en tu mapa. Nadie más.", JSON.stringify([esState.create, esState.tagline]));

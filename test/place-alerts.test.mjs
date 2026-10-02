@@ -25,7 +25,7 @@ const { generateIdentity, newSeed, sealMessage, buildPost } = await import("../a
 const { b64uEncode } = await import("../app/js/wire.js");
 
 test.after(() => {
-  delete globalThis.StarlingNative;
+  delete globalThis.KestrelNative;
   harness.stopTimers();
 });
 
@@ -51,7 +51,7 @@ async function circleWith(places) {
 // Far away, into the place, and back out; returns the place notifications.
 async function walk(who) {
   const calls = [];
-  globalThis.StarlingNative = {
+  globalThis.KestrelNative = {
     windowShown: () => false,
     notify: (title, body, tag) => {
       if (tag === `place-${who.memberId}`) calls.push(title);

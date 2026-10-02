@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const kt = (name) =>
-  readFileSync(new URL(`../android/app/src/main/kotlin/app/starlingmap/${name}`, import.meta.url), "utf8");
+  readFileSync(new URL(`../android/app/src/main/kotlin/app/kestrel/map/${name}`, import.meta.url), "utf8");
 const manifest = () =>
   readFileSync(new URL("../android/app/src/main/AndroidManifest.xml", import.meta.url), "utf8");
 
@@ -40,7 +40,7 @@ test("thawing is for shares only: a page with no share running is left to freeze
 });
 
 test("the page reports its freeze, and the bridge hands it straight to PageHost", () => {
-  assert.match(kt("StarlingBridge.kt"), /fun pageFrozen\(\) = PageHost\.frozen\(\)/);
+  assert.match(kt("KestrelBridge.kt"), /fun pageFrozen\(\) = PageHost\.frozen\(\)/);
   const main = readFileSync(new URL("../app/js/main.js", import.meta.url), "utf8");
   assert.match(main, /document\.addEventListener\("freeze", \(\) => \{\s*try \{\s*native\(\)\?\.pageFrozen\?\.\(\);/);
 });
@@ -89,7 +89,7 @@ test("windowShown follows the activity's start and stop", () => {
   const act = kt("MainActivity.kt");
   assert.match(fn(act, "onStart"), /PageHost\.setShown\(this, true\)/);
   assert.match(fn(act, "onStop"), /PageHost\.setShown\(this, false\)/);
-  assert.match(kt("StarlingBridge.kt"), /fun windowShown\(\): Boolean = PageHost\.windowShown/);
+  assert.match(kt("KestrelBridge.kt"), /fun windowShown\(\): Boolean = PageHost\.windowShown/);
 });
 
 test("each fix holds the CPU up for the page, from before the page hears of it", () => {
@@ -106,7 +106,7 @@ test("each fix holds the CPU up for the page, from before the page hears of it",
 });
 
 test("the wake lock is let go when the page is done, and on every way a share ends", () => {
-  const bridge = kt("StarlingBridge.kt");
+  const bridge = kt("KestrelBridge.kt");
   assert.match(fn(bridge, "pulse"), /if \(busy <= 0\) LocationService\.letSleep\(\)/);
   const destroy = fn(kt("LocationService.kt"), "onDestroy");
   assert.match(destroy, /letSleep\(\)/);
@@ -163,7 +163,7 @@ test("requests that have produced nothing for minutes with location on are made 
 });
 
 test("a share start from a page with no window waits for the window instead of throwing", () => {
-  const bridge = kt("StarlingBridge.kt");
+  const bridge = kt("KestrelBridge.kt");
   const start = fn(bridge, "startLocation");
   assert.match(start, /if \(PageHost\.windowShown && PageHost\.activity === a\) a\.startShareFlow\(\)/);
   assert.match(start, /else a\.startShareWhenShown\(\)/);
@@ -180,7 +180,7 @@ test("the battery exemption is asked for, never taken, and there is still no bac
   const ask = fn(kt("MainActivity.kt"), "askBatteryExemption");
   assert.match(ask, /isIgnoringBatteryOptimizations\(packageName\) == true\) return/, "not asked twice");
   assert.match(ask, /ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS/);
-  assert.match(kt("StarlingBridge.kt"), /fun askBatteryExemption\(\) \{\s*ui \{ it\.askBatteryExemption\(\) \}/, "only from a window");
+  assert.match(kt("KestrelBridge.kt"), /fun askBatteryExemption\(\) \{\s*ui \{ it\.askBatteryExemption\(\) \}/, "only from a window");
 });
 
 test("the health snapshot never goes near a position", () => {
@@ -212,10 +212,10 @@ test("Back during a share leaves the app instead of closing it, and a share its 
 const code = (body) => body.replace(/\/\/[^\n]*/g, "").replace(/\s+/g, " ").trim();
 
 test("the panic wipe never touches the WebView from the bridge thread, so the wipe itself runs", () => {
-  const bridge = kt("StarlingBridge.kt");
+  const bridge = kt("KestrelBridge.kt");
   // removeView and WebView.destroy() throw off the main thread, and panicWipe died there before Wipe ran.
   for (const call of ["PageHost.destroy(", "PageHost.load(", "PageHost.attach(", "PageHost.detachFrom("]) {
-    assert.ok(!bridge.includes(call), `StarlingBridge must not call ${call}`);
+    assert.ok(!bridge.includes(call), `KestrelBridge must not call ${call}`);
   }
   assert.equal(code(fn(bridge, "panicWipe")), "fun panicWipe() { Wipe.everything(app) }");
   assert.match(kt("PanicActivity.kt"), /private fun wipeEverything\(\) = Wipe\.everything\(this\)/, "both triggers run the same wipe");
@@ -273,7 +273,7 @@ test("the notice after a stop only says the app was closed when it was", () => {
 });
 
 test("the app lock ending a share leaves a record, and a notice only when nobody is looking", () => {
-  const bridge = fn(kt("StarlingBridge.kt"), "shareEndedByLock");
+  const bridge = fn(kt("KestrelBridge.kt"), "shareEndedByLock");
   assert.match(bridge, /LocationService\.endShare\(app, "lock", notify = !PageHost\.windowShown\)/);
-  assert.match(kt("StarlingBridge.kt"), /@JavascriptInterface\s+fun shareEndedByLock\(\)/);
+  assert.match(kt("KestrelBridge.kt"), /@JavascriptInterface\s+fun shareEndedByLock\(\)/);
 });

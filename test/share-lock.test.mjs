@@ -1,4 +1,4 @@
-// The app lock during a share (munzzyy/starling#6). A locked Starling holds no
+// The app lock during a share (munzzyy/starling#6). A locked Kestrel holds no
 // keys, so a share cannot outlive the lock, but it used to end in silence: the
 // bye was cancelled before it went, nothing told the sharer, and the circle
 // only saw the dot go grey minutes later.
@@ -35,7 +35,7 @@ let keep = false;
 async function sharingWithLock(autolockMs) {
   calls.length = 0;
   keep = false;
-  globalThis.StarlingNative = {
+  globalThis.KestrelNative = {
     startLocation: () => calls.push("startLocation"),
     stopLocation: () => calls.push("stopLocation"),
     clearStopRecord: () => calls.push("clearStopRecord"),

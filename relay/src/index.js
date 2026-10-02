@@ -1,4 +1,4 @@
-// Starling relay: a zero-knowledge drop box for ciphertext location posts.
+// Kestrel relay: a zero-knowledge drop box for ciphertext location posts.
 // It stores (channel, member, epoch, ts, nonce, ciphertext) rows, verifies
 // signatures against keys pinned on first write, and expires everything
 // after TTL_MS. It never sees plaintext, names, or any key that decrypts
@@ -371,7 +371,7 @@ const ASSETLINKS = [
     relation: ["delegate_permission/common.handle_all_urls"],
     target: {
       namespace: "android_app",
-      package_name: "app.starlingmap",
+      package_name: "app.kestrel.map",
       sha256_cert_fingerprints: [
         "DB:B0:C4:91:53:0F:74:75:40:9C:4C:29:53:E9:F6:8A:52:51:9C:2F:68:1D:D9:E5:F6:99:38:F3:BF:9B:8C:9E",
       ],

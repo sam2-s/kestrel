@@ -92,7 +92,7 @@ async function freshCircle({ e0 = epochAt(Date.now()) } = {}) {
   const gen = await openGeneration({ seed: newSeed(), g: 0, e0 });
   gen.at = Date.now();
   state.gen = gen;
-  window.__starlingErrors.length = 0;
+  window.__kestrelErrors.length = 0;
   return gen;
 }
 
@@ -354,7 +354,7 @@ async function waitingJoiner() {
   state.pinned = new Map();
   state.genRoster = new Set();
   state.circles = [];
-  window.__starlingErrors.length = 0;
+  window.__kestrelErrors.length = 0;
   return joinSession();
 }
 
@@ -1393,7 +1393,7 @@ test("a joiner assembles a complete welcome out of a channel a failed attempt al
   state.invite = null;
   state.joinRequests = [];
   state.joinIncomplete = null;
-  window.__starlingErrors.length = 0;
+  window.__kestrelErrors.length = 0;
   state.joining = {
     status: "waiting",
     since: Date.now(),

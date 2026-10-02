@@ -13,7 +13,7 @@ it is what it says it is.
 `b028d48196460cf996015d675c9638c731e9d6e2000c6eb6c916e237ae7abaa6`.
 
 It is the Argon2 reference implementation, compiled as is. Nothing in it was
-written for Starling except `tools/argon2/shim.c`: the five libc symbols the
+written for Kestrel except `tools/argon2/shim.c`: the five libc symbols the
 reference calls (`memcpy`, `memset`, `strlen`, `malloc`, `free`), a bump
 allocator over the module's own memory, and one exported function that fills
 an `argon2_context` and calls the reference's `argon2_ctx`. The module

@@ -1499,7 +1499,7 @@ test("a zeroed vault key is not a vault key", () => {
   assert.equal(usableVaultKey(new Uint8Array(32)), false);
   assert.equal(usableVaultKey(null), false);
   assert.equal(usableVaultKey(undefined), false);
-  // Not a Starling vault key, whatever else it is.
+  // Not a Kestrel vault key, whatever else it is.
   assert.equal(usableVaultKey(new Uint8Array(16).fill(9)), false);
   assert.equal(usableVaultKey("0123456789abcdef0123456789abcdef"), false, "32 characters are not 32 bytes");
   assert.equal(usableVaultKey(new Array(32).fill(7)), false);

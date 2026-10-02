@@ -26,7 +26,7 @@ const { b64uEncode } = await import("../app/js/wire.js");
 const { statusOf, displayStatus, sortMembers, STALE_MS } = await import("../app/js/net.js");
 
 test.after(() => {
-  delete globalThis.StarlingNative;
+  delete globalThis.KestrelNative;
   harness.stopTimers();
 });
 
@@ -93,7 +93,7 @@ test("displayStatus keeps a silent SOS first in sortMembers", () => {
 test("an SOS that goes quiet fires one urgent notification", async () => {
   await inCircle();
   const calls = [];
-  globalThis.StarlingNative = {
+  globalThis.KestrelNative = {
     windowShown: () => false,
     notify: (...a) => calls.push(a),
     cancelNotify: () => {},
@@ -120,7 +120,7 @@ test("an SOS that goes quiet fires one urgent notification", async () => {
 
 test("an incoming SOS card stays until check-in", async () => {
   await inCircle();
-  globalThis.StarlingNative = { windowShown: () => true };
+  globalThis.KestrelNative = { windowShown: () => true };
   const who = await generateIdentity();
   const id = `sos:${who.memberId}`;
   const card = () => internals.alertItems().find((i) => i.id === id);

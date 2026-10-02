@@ -1,6 +1,6 @@
 // Letting somebody in, and being let in.
 //
-// This is the one exchange in Starling where two devices that have never met
+// This is the one exchange in Kestrel where two devices that have never met
 // have to agree about who each other is, and it is where round after round of
 // review has found defects: not in the sealing, in the ORDER. Who is checked
 // before what is written down, what has already happened by the time a post

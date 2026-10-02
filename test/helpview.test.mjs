@@ -62,7 +62,7 @@ test("the beacon post carries the battery level a circle post does", async () =>
     await import("../app/js/crypto.js");
   const { b64uDecode } = await import("../app/js/wire.js");
 
-  globalThis.StarlingNative = {
+  globalThis.KestrelNative = {
     startLocation: () => {},
     stopLocation: () => {},
     setShareCadence: () => {},
@@ -113,7 +113,7 @@ test("the beacon post carries the battery level a circle post does", async () =>
     harness.onFetch(null);
     state.sosActive = false;
     if (state.sharing) await internals.setSharing(false);
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
     harness.stopTimers();
   }
 });

@@ -100,7 +100,7 @@ const cards = () => internals.alertItems().map((i) => i.id);
 test("a destruct that cannot erase does not tell anyone the keys are gone", async () => {
   await staleCircle();
   failKey = "leaving"; // the journal leaveActive writes before it deletes anything
-  window.__starlingErrors.length = 0;
+  window.__kestrelErrors.length = 0;
 
   await internals.syncRatchet();
   await settle(30);
@@ -125,7 +125,7 @@ test("a destruct that can erase says so, and erases", async () => {
   // never shows either card.
   await staleCircle();
   failKey = null;
-  window.__starlingErrors.length = 0;
+  window.__kestrelErrors.length = 0;
 
   await internals.syncRatchet();
   await settle(30);

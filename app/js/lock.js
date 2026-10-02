@@ -253,7 +253,7 @@ const BIO_TIMEOUT_MS = 90000;
 let bioTokenN = 0;
 const bioPending = new Map();
 
-globalThis.__starlingBio = (token, payload) => {
+globalThis.__kestrelBio = (token, payload) => {
   const p = bioPending.get(token);
   if (!p) return;
   bioPending.delete(token);
@@ -351,8 +351,8 @@ export async function makeBioRecord(vaultKeyBytes) {
     cred = await navigator.credentials.create({
       publicKey: {
         challenge: randomBytes(32),
-        rp: { name: "Starling", id: rpId() },
-        user: { id: randomBytes(16), name: "starling", displayName: "Starling" },
+        rp: { name: "Kestrel", id: rpId() },
+        user: { id: randomBytes(16), name: "kestrel", displayName: "Kestrel" },
         pubKeyCredParams: [
           { type: "public-key", alg: -7 },
           { type: "public-key", alg: -257 },

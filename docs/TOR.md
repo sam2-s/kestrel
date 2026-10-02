@@ -3,7 +3,7 @@
 Nathan asked about building `arti-mobile` (Tor's Rust reimplementation) into
 the Android wrapper instead of talking to the separate Orbot app. Researched
 it. Verdict: don't switch. Written down so we don't re-litigate this every
-time someone asks why Starling still shells out to Orbot.
+time someone asks why Kestrel still shells out to Orbot.
 
 ## What we do today
 
@@ -39,7 +39,7 @@ packaging story were solved, the integration itself would be small.
 
 - **gpmaven kills the F-Droid MR.** F-Droid's inclusion policy doesn't
   accept prebuilt binaries from an arbitrary GitHub raw URL as a dependency
-  source. Starling is on F-Droid (`docs/fdroid/app.starlingmap.yml`).
+  source. Upstream's app is on F-Droid; this fork is not listed anywhere.
   Pulling in gpmaven would get it pulled from there, full stop.
 - **The one artifact that exists is stale where it matters.** 1.7.0.1 pins
   arti 1.7.0 / arti-client 0.36.0 from October 2025, nine minor releases
@@ -48,7 +48,7 @@ packaging story were solved, the integration itself would be small.
 - **arti-client calls `exit(1)` on a required-subprotocol shutdown.** That's
   documented behavior, not a bug we'd be hoping to avoid. A stale or
   misconfigured embed can kill the whole app's process. For most apps
-  that's a crash. For Starling that's someone's location share silently
+  that's a crash. For Kestrel that's someone's location share silently
   dying mid-session.
 - **Size.** +15.7 MB of arm64 `.so` on what is currently a 7.8 MB APK. That's
   not disqualifying on its own, but it's not free either, and it buys us a

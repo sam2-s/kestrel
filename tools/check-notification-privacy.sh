@@ -8,8 +8,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-events=android/app/src/main/kotlin/app/starlingmap/Events.kt
-service=android/app/src/main/kotlin/app/starlingmap/LocationService.kt
+events=android/app/src/main/kotlin/app/kestrel/map/Events.kt
+service=android/app/src/main/kotlin/app/kestrel/map/LocationService.kt
 fail=0
 
 # Events.post takes the real title/body of a circle event (a member's name,

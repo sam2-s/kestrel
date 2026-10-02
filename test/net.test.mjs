@@ -588,7 +588,7 @@ test("an idle poller still advances the chain: syncToClock runs on every tick", 
 
 // The wrapper keeps polling while hidden (an SOS must reach a pocketed
 // phone); the web stays paused as it always did. isWrapped() keys on
-// globalThis.StarlingNative, so wrapper mode is one stub away.
+// globalThis.KestrelNative, so wrapper mode is one stub away.
 test("the cadence numbers themselves: 30s hidden in the wrapper, 10s otherwise", () => {
   assert.equal(pollDelay(true, true), 30000, "hidden wrapper listens at the relaxed cadence");
   assert.equal(pollDelay(false, true), 10000, "visible wrapper polls at full cadence");
@@ -607,7 +607,7 @@ test("hidden document: web pauses, wrapper keeps listening", async () => {
     web.stop();
     assert.equal(calls.length, 0, "a hidden web tab must not fetch");
 
-    globalThis.StarlingNative = { platform: () => "android" };
+    globalThis.KestrelNative = { platform: () => "android" };
     try {
       const app = createPoller({ channelId: CHANNEL, roster: { async ingest() {} } });
       app.start();
@@ -615,7 +615,7 @@ test("hidden document: web pauses, wrapper keeps listening", async () => {
       app.stop();
       assert.ok(calls.length >= 1, "the hidden wrapper keeps polling");
     } finally {
-      delete globalThis.StarlingNative;
+      delete globalThis.KestrelNative;
     }
   } finally {
     restore();
@@ -631,7 +631,7 @@ test("a thaw with no window up neither polls at once nor delays the next poll", 
     if (type === "visibilitychange") listeners.push(fn);
   };
   let shown = false;
-  globalThis.StarlingNative = { platform: () => "android", windowShown: () => shown };
+  globalThis.KestrelNative = { platform: () => "android", windowShown: () => shown };
   try {
     globalThis.document.visibilityState = "hidden";
     const poller = createPoller({ channelId: CHANNEL, roster: { async ingest() {} } });
@@ -666,7 +666,7 @@ test("a thaw with no window up neither polls at once nor delays the next poll", 
     assert.equal(calls.length, afterStart + 1, "the person coming back is");
     poller.stop();
   } finally {
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
     restore();
   }
 });

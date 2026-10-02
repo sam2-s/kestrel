@@ -1,31 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Starling</string>
+    <string name="app_name">Kestrel</string>
     <string name="notif_channel">Standortfreigabe</string>
     <string name="notif_events_channel">Hinweise aus dem Kreis</string>
     <string name="notif_sos_channel">Notfall-Hinweise</string>
-    <string name="notif_sos_text">Öffne Starling jetzt.</string>
+    <string name="notif_sos_text">Öffne Kestrel jetzt.</string>
     <string name="notif_title">Teilst mit deinem Kreis</string>
     <string name="notif_text_forward">Wird auch an %1$s gesendet. Tippe auf Stopp, um es zu beenden.</string>
     <string name="notif_text">Tippe auf Stopp, um es zu beenden.</string>
     <string name="notif_swiped_title">Teilen gestoppt</string>
-    <string name="notif_swiped_text">Starling wurde geschlossen. Öffne es wieder, um weiter zu teilen.</string>
+    <string name="notif_swiped_text">Kestrel wurde geschlossen. Öffne es wieder, um weiter zu teilen.</string>
     <string name="notif_location_off">Der Standort ist auf diesem Handy aus. Schalte ihn ein, um weiter zu teilen.</string>
-    <string name="notif_locked_text">Öffne Starling, um zu sehen, was passiert ist.</string>
+    <string name="notif_locked_text">Öffne Kestrel, um zu sehen, was passiert ist.</string>
     <string name="notif_remind_title">Teilen ist aus</string>
-    <string name="notif_remind_text">Öffne Starling, um wieder zu teilen.</string>
+    <string name="notif_remind_text">Öffne Kestrel, um wieder zu teilen.</string>
     <string name="notif_stop">Stopp</string>
     <string name="bio_wrap_title">Bestätige, um die biometrische Entsperrung einzurichten</string>
-    <string name="bio_unwrap_title">Starling entsperren</string>
+    <string name="bio_unwrap_title">Kestrel entsperren</string>
     <string name="bio_cancel">Passcode verwenden</string>
     <string name="panic_connect_title">Panikknopf</string>
-    <string name="panic_connect_text">Darf %1$s die Panik-Löschung von Starling auslösen? Ein Auslösen löscht das Kreisgeheimnis, deine Identität und jede Spur von Starling auf diesem Gerät, sofort und ohne Nachfrage. Das lässt sich nicht rückgängig machen.</string>
+    <string name="panic_connect_text">Darf %1$s die Panik-Löschung von Kestrel auslösen? Ein Auslösen löscht das Kreisgeheimnis, deine Identität und jede Spur von Kestrel auf diesem Gerät, sofort und ohne Nachfrage. Das lässt sich nicht rückgängig machen.</string>
     <string name="panic_allow">Panik-Löschung erlauben</string>
     <string name="panic_deny">Nicht erlauben</string>
     <string name="panic_unknown_app">diese App</string>
     <string name="webview_title">Android System WebView aktualisieren</string>
-    <string name="webview_too_old">Starling läuft in Android System WebView und braucht Version %1$d oder neuer. Dieses Handy hat Version %2$d.\n\nAktualisiere Android System WebView (auf manchen Handys kommt es mit Chrome) über deinen App-Store oder installiere das neueste Systemupdate, und öffne Starling dann erneut.</string>
-    <string name="webview_missing">Starling läuft in Android System WebView, und dieses Handy hat keins, das funktioniert. Vielleicht ist es in den App-Einstellungen deines Handys deaktiviert, oder es braucht ein Update aus deinem App-Store.</string>
+    <string name="webview_too_old">Kestrel läuft in Android System WebView und braucht Version %1$d oder neuer. Dieses Handy hat Version %2$d.\n\nAktualisiere Android System WebView (auf manchen Handys kommt es mit Chrome) über deinen App-Store oder installiere das neueste Systemupdate, und öffne Kestrel dann erneut.</string>
+    <string name="webview_missing">Kestrel läuft in Android System WebView, und dieses Handy hat keins, das funktioniert. Vielleicht ist es in den App-Einstellungen deines Handys deaktiviert, oder es braucht ein Update aus deinem App-Store.</string>
     <string name="android9_title">Dieses Handy läuft mit Android 9</string>
-    <string name="android9_body">Googles letzte Sicherheitsupdates für Android 9 kamen im Januar 2022. Starling funktioniert hier, aber seitdem gefundene Lücken in Android bleiben auf diesem Handy offen, und eine schädliche App oder Website könnte eine davon nutzen, um deinen Standort zu verfolgen.\n\nAndroid 9 kann den Standortzugriff auch nicht auf \"nur während der Nutzung\" beschränken, die Berechtigung gilt also immer. Starling liest deinen Standort nur, während du es benutzt oder teilst.\n\nWenn du kannst, nimm ein neueres Handy.</string>
+    <string name="android9_body">Googles letzte Sicherheitsupdates für Android 9 kamen im Januar 2022. Kestrel funktioniert hier, aber seitdem gefundene Lücken in Android bleiben auf diesem Handy offen, und eine schädliche App oder Website könnte eine davon nutzen, um deinen Standort zu verfolgen.\n\nAndroid 9 kann den Standortzugriff auch nicht auf \"nur während der Nutzung\" beschränken, die Berechtigung gilt also immer. Kestrel liest deinen Standort nur, während du es benutzt oder teilst.\n\nWenn du kannst, nimm ein neueres Handy.</string>
 </resources>

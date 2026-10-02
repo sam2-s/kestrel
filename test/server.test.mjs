@@ -13,7 +13,7 @@ import { newSeed, generateIdentity, sealMessage, buildPost } from "../app/js/cry
 
 function tmpDbPath() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "starling-relay-test-"));
-  return path.join(dir, "starling.db");
+  return path.join(dir, "kestrel.db");
 }
 
 let ipN = 0;

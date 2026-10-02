@@ -78,7 +78,7 @@ test("a safety number code is named for what it is and joins nothing", async () 
 
 test("anything else is not an invite, and joins nothing", () => {
   for (const text of [scanned("https://example.org/hello"), "https://starlingmap.app/#j=abc", "", "j=nope"]) {
-    assert.equal(internals.inviteScanProblem(text), "That is not a Starling invite code.", JSON.stringify(text));
+    assert.equal(internals.inviteScanProblem(text), "That is not a Kestrel invite code.", JSON.stringify(text));
     const joined = [];
     assert.equal(internals.joinFromScan(text, (invite) => joined.push(invite)), false);
     assert.deepEqual(joined, []);

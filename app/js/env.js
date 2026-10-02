@@ -8,8 +8,8 @@
 
 const CANONICAL = "https://starlingmap.app";
 
-export const isWrapped = () => !!globalThis.StarlingNative;
-export const native = () => globalThis.StarlingNative ?? null;
+export const isWrapped = () => !!globalThis.KestrelNative;
+export const native = () => globalThis.KestrelNative ?? null;
 
 // Whether a person can see the page. The wrapper makes a hidden page visible for
 // a second at a time during a share, so it answers from its window instead.
@@ -25,7 +25,7 @@ export function pageShown() {
 }
 
 // The iOS wrapper serves this same bundle on its own scheme. There is no
-// StarlingNative there, and must not be until iOS can actually deliver what
+// KestrelNative there, and must not be until iOS can actually deliver what
 // the bridge names (background fixes, notifications, the OS wipe), so
 // isWrapped() stays false and every capability that hangs off it keeps
 // reading as absent. What the scheme does say: this page came out of a
@@ -72,7 +72,7 @@ const WEB_SHARE_ENABLED = false;
 // server. Never on the hosted site, and never inside the shipped Android app,
 // which serves the same bundle from its own asset origin.
 //
-// This does NOT cover __starlingFix or __starlingBio. Those are not debug
+// This does NOT cover __kestrelFix or __kestrelBio. Those are not debug
 // hooks, they are the callbacks the native side invokes to deliver a location
 // fix and a biometric result, and the app does not work without them.
 // A loopback dev server is http(s) on a loopback name. The protocol check

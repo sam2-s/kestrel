@@ -1,6 +1,6 @@
 // Host-environment routing: relay normalization, API base selection, and the
 // wrappers' canonical invite origin. The Android wrapper is simulated by
-// planting a fake StarlingNative bridge on globalThis; the iOS wrapper by a
+// planting a fake KestrelNative bridge on globalThis; the iOS wrapper by a
 // location whose protocol is the starling: scheme.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -8,11 +8,11 @@ import { normalizeRelay, setApiBase, apiUrl, getApiBase, customRelayInUse, share
 const envExports = { shareCapable };
 
 function withBridge(bridge, fn) {
-  globalThis.StarlingNative = bridge;
+  globalThis.KestrelNative = bridge;
   try {
     return fn();
   } finally {
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
   }
 }
 
@@ -145,7 +145,7 @@ test("shareCapable: wrappers always, dev servers on the web, hosted origin never
 test("the iOS wrapper is bundled but never the bridge", () => {
   withLocation(IOS_WRAP, () => {
     assert.equal(isIOSWrapped(), true);
-    assert.equal(isWrapped(), false, "no StarlingNative on iOS, ever");
+    assert.equal(isWrapped(), false, "no KestrelNative on iOS, ever");
     assert.equal(isBundled(), true);
   });
   withLocation({ protocol: "https:", hostname: "starlingmap.app" }, () => {

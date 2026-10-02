@@ -155,7 +155,7 @@ test("the report carries versions, settings and counts", () => {
     now,
   });
   for (const want of [
-    "Starling sharing report",
+    "Kestrel sharing report",
     "Made: 2026-09-30T14:03Z",
     "App: 0.13.4 (page 0.13.4)",
     "Android: 16 (SDK 36)",

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const kt = (name) =>
-  readFileSync(new URL(`../android/app/src/main/kotlin/app/starlingmap/${name}`, import.meta.url), "utf8");
+  readFileSync(new URL(`../android/app/src/main/kotlin/app/kestrel/map/${name}`, import.meta.url), "utf8");
 const manifest = () => readFileSync(new URL("../android/app/src/main/AndroidManifest.xml", import.meta.url), "utf8");
 
 function fn(src, name) {

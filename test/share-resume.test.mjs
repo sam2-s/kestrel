@@ -43,7 +43,7 @@ const { epochAt } = await import("../app/js/ratchet.js");
 const { generateIdentity, newSeed } = await import("../app/js/crypto.js");
 
 function nativeStub() {
-  globalThis.StarlingNative = {
+  globalThis.KestrelNative = {
     startLocation() {},
     stopLocation() {},
     clearStopRecord() {},

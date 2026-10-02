@@ -137,7 +137,7 @@ export function createServer({
 async function main() {
   const port = Number(process.env.PORT) || 8788;
   const host = process.env.HOST || "127.0.0.1";
-  const dbPath = process.env.STARLING_DB_PATH || path.join(HERE, "data", "starling.db");
+  const dbPath = process.env.KESTREL_DB_PATH || path.join(HERE, "data", "kestrel.db");
   const trustProxy = process.env.TRUST_PROXY === "1";
   const publicOrigin = process.env.PUBLIC_ORIGIN || `http://${host}:${port}`;
   const sweepIntervalMs = process.env.SWEEP_INTERVAL_MS ? Number(process.env.SWEEP_INTERVAL_MS) : 10 * 60_000;
@@ -156,7 +156,7 @@ async function main() {
   });
 
   server.listen(port, host, () => {
-    console.log(`starling relay listening on http://${host}:${port} (db: ${dbPath})`);
+    console.log(`kestrel relay listening on http://${host}:${port} (db: ${dbPath})`);
     if (trustProxy) console.log("TRUST_PROXY=1: trusting the last X-Forwarded-For hop for rate limiting");
   });
 

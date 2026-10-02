@@ -148,7 +148,7 @@ return (function () {
 class Browser:
     def __init__(self, name, port, width=412, height=915):
         self.name = name
-        self.profile = tempfile.mkdtemp(prefix=f"starling-e2e-{name}-")
+        self.profile = tempfile.mkdtemp(prefix=f"kestrel-e2e-{name}-")
         with open(os.path.join(self.profile, "user.js"), "w") as f:
             f.write(f'user_pref("marionette.port", {port});\n')
         self.proc = subprocess.Popen(
@@ -203,12 +203,12 @@ class Browser:
             raise E2EError(f"{self.name}: no element for click: {css}")
 
     def state(self):
-        return self.exec("return window.__starlingState ? window.__starlingState() : null")
+        return self.exec("return window.__kestrelState ? window.__kestrelState() : null")
 
     def errors(self):
         return {
             "__errs": self.exec("return window.__errs || null"),
-            "__starlingErrors": self.exec("return window.__starlingErrors || null"),
+            "__kestrelErrors": self.exec("return window.__kestrelErrors || null"),
         }
 
     def escape(self):
@@ -344,8 +344,8 @@ def type_name_and_confirm(b, name, confirm_testid):
 
 def start_server():
     env = dict(os.environ)
-    env.update({"STARLING_TEST": "1", "RATE_POST_MIN": "100000", "RATE_GET_MIN": "100000"})
-    logfile = open(os.path.join(tempfile.gettempdir(), "starling-e2e-server.log"), "w")
+    env.update({"KESTREL_TEST": "1", "RATE_POST_MIN": "100000", "RATE_GET_MIN": "100000"})
+    logfile = open(os.path.join(tempfile.gettempdir(), "kestrel-e2e-server.log"), "w")
     proc = subprocess.Popen(["node", os.path.join(ROOT, "test", "serve_local.mjs"),
                              str(HTTP_PORT)],
                             cwd=ROOT, env=env, stdout=logfile, stderr=logfile)
@@ -627,15 +627,15 @@ def cross_visibility(a, b):
 
 def flagship_map_shots(a, b):
     sheet_to_peek(a)
-    if not a.exec("return window.__starlingFit()"):
-        raise E2EError("A __starlingFit found nothing to frame")
+    if not a.exec("return window.__kestrelFit()"):
+        raise E2EError("A __kestrelFit found nothing to frame")
     time.sleep(1.2)
     a.shot("02-map-two-members.png")
 
     set_offgrid(b)
     sheet_to_peek(b)
-    if not b.exec("return window.__starlingFit()"):
-        raise E2EError("B __starlingFit found nothing to frame")
+    if not b.exec("return window.__kestrelFit()"):
+        raise E2EError("B __kestrelFit found nothing to frame")
     time.sleep(1.2)
     b.shot("04-joined.png")
 
@@ -791,7 +791,7 @@ def flow_help_beacon(b):
 
         # The helper page must never hold circle material.
         leaked = c.exec(
-            "return Object.keys(localStorage).length + (window.__starlingState ? 1 : 0)")
+            "return Object.keys(localStorage).length + (window.__kestrelState ? 1 : 0)")
         if leaked:
             raise E2EError("help viewer holds app state it should not have")
 

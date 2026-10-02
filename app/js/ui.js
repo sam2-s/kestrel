@@ -397,7 +397,7 @@ export function openJoinSheet({ profile, hasCircle, circleName, relayHost, onJoi
     );
   }
   if (relayHost) {
-    const note = el("p", "ov-note", t("This circle uses the relay at {host}. Asking to join switches Starling to it.", { host: relayHost }));
+    const note = el("p", "ov-note", t("This circle uses the relay at {host}. Asking to join switches Kestrel to it.", { host: relayHost }));
     note.dataset.testid = "join-relay-note";
     ov.body.append(note);
   }
@@ -850,7 +850,7 @@ export function openMembersSheet({ api, onClose }) {
     el(
       "p",
       "ov-note",
-      "Starling trusts whoever first answers with keys that match their member id. Reading these numbers out to each other is what turns that into knowing who is on your map.",
+      "Kestrel trusts whoever first answers with keys that match their member id. Reading these numbers out to each other is what turns that into knowing who is on your map.",
     ),
   );
 
@@ -1004,7 +1004,7 @@ export function openSafetyQrSheet({ text, qrSvgFor }) {
     el(
       "p",
       "ov-note",
-      "Let the person checking you scan this with Starling. It holds your member id and your safety number, nothing else.",
+      "Let the person checking you scan this with Kestrel. It holds your member id and your safety number, nothing else.",
     ),
   );
   return ov;
@@ -1075,7 +1075,7 @@ export function openScanSheet({ api, onResult, onClose, check, title, note }) {
   }
 
   const turnedDown = () => {
-    status.textContent = t("Camera access was turned down. Allow it for Starling in system settings, then try again.");
+    status.textContent = t("Camera access was turned down. Allow it for Kestrel in system settings, then try again.");
     status.className = "ov-warn-note";
     settings.hidden = !native()?.openAppSettings;
   };
@@ -1167,7 +1167,7 @@ function openScanVerdict(api, verdict, { onChanged }) {
   } else if (verdict.outcome === "unknown") {
     ov.body.append(el("p", "ov-note", "That code belongs to nobody in this circle."));
   } else {
-    ov.body.append(el("p", "ov-note", "That is not a Starling safety number code."));
+    ov.body.append(el("p", "ov-note", "That is not a Kestrel safety number code."));
   }
   return ov;
 }
@@ -1432,7 +1432,7 @@ export function openInviteSheet({ api, getLink, qrSvgFor, onClose }) {
   const waiting = el("p", "ov-note");
   waiting.dataset.testid = "invite-waiting";
 
-  share.addEventListener("click", () => shareLink(getLink(), "Join my circle on Starling:", "Invite link copied"));
+  share.addEventListener("click", () => shareLink(getLink(), "Join my circle on Kestrel:", "Invite link copied"));
   copy.addEventListener("click", () => copyLink(getLink(), "Invite link copied"));
 
   ov.body.append(
@@ -1684,7 +1684,7 @@ export function openExportSheet(json, { onClose } = {}) {
     el(
       "p",
       "ov-note",
-      "Everything Starling keeps about you, on this device and nowhere else. Positions are absent because they are never stored; keys are absent on purpose.",
+      "Everything Kestrel keeps about you, on this device and nowhere else. Positions are absent because they are never stored; keys are absent on purpose.",
     ),
   );
   const pre = el("pre", "export-json");
@@ -1728,7 +1728,7 @@ export function openPlacesSheet({ api, onAdd, onPick, onRename, onRadius, onFenc
     el(
       "p",
       "ov-note",
-      "Name the spots that matter, like Home or School, and Starling tells you when someone in your circle arrives or leaves. Places are stored only on this phone. They are never sent anywhere, and the relay cannot learn they exist.",
+      "Name the spots that matter, like Home or School, and Kestrel tells you when someone in your circle arrives or leaves. Places are stored only on this phone. They are never sent anywhere, and the relay cannot learn they exist.",
     ),
     el(
       "p",
@@ -2184,7 +2184,7 @@ export function openSettingsSheet({ api, values, demo, tor, keepSharing, backgro
   if (keepSharing) {
     const row = switchRow({
       label: "Keep sharing when the app is closed",
-      note: "Sharing normally stops when you swipe Starling out of recents, because the keys that encrypt each position live in the app. With this on, Starling stays loaded in the background until the share ends, so closing it does not stop it. Anyone holding your unlocked phone can see the app is still running, and it is still holding your keys, so the app lock cannot protect them until the share ends.",
+      note: "Sharing normally stops when you swipe Kestrel out of recents, because the keys that encrypt each position live in the app. With this on, Kestrel stays loaded in the background until the share ends, so closing it does not stop it. Anyone holding your unlocked phone can see the app is still running, and it is still holding your keys, so the app lock cannot protect them until the share ends.",
       value: keepSharing.enabled,
       onChange: (v) => onChange("keepSharing", v),
     });
@@ -2223,10 +2223,10 @@ export function openSettingsSheet({ api, values, demo, tor, keepSharing, backgro
       painted = mode;
       const note =
         mode === "unrestricted"
-          ? t("Unrestricted. Android lets Starling keep a share going with the screen off.")
+          ? t("Unrestricted. Android lets Kestrel keep a share going with the screen off.")
           : mode === "restricted"
-            ? t("Restricted. Android stops Starling about a minute after you leave it, and a share stops with it. Set battery use to Unrestricted in the app's settings.")
-            : t("Optimized. Android may pause Starling to save battery while the screen is off, which can stop your circle seeing you move. Allowing it to run in the background prevents that.");
+            ? t("Restricted. Android stops Kestrel about a minute after you leave it, and a share stops with it. Set battery use to Unrestricted in the app's settings.")
+            : t("Optimized. Android may pause Kestrel to save battery while the screen is off, which can stop your circle seeing you move. Allowing it to run in the background prevents that.");
       const kids = [el("p", "field-note", note)];
       if (mode === "optimized") {
         const allow = btn("btn btn-secondary", "Allow background running");
@@ -2424,7 +2424,7 @@ export function openSettingsSheet({ api, values, demo, tor, keepSharing, backgro
     const gLock = group("App lock");
     const lockRow = switchRow({
       label: "Require passcode",
-      note: "Encrypts your circle secret on this device. Nobody can open Starling, or read the secret from storage, without your passcode.",
+      note: "Encrypts your circle secret on this device. Nobody can open Kestrel, or read the secret from storage, without your passcode.",
       value: lock.enabled,
       onChange: (on) => {
         // The switch paints optimistically; if the passcode sheet is dismissed
@@ -2439,7 +2439,7 @@ export function openSettingsSheet({ api, values, demo, tor, keepSharing, backgro
         if (on) {
           openPasscodeSheet({
             title: "Set a passcode",
-            intro: "Choose a passcode to lock Starling on this device. There is no reset: if you forget it, you have to erase this device and rejoin from an invite.",
+            intro: "Choose a passcode to lock Kestrel on this device. There is no reset: if you forget it, you have to erase this device and rejoin from an invite.",
             cta: "Turn on app lock",
             confirm: true,
             onClose: revert,
@@ -2517,7 +2517,7 @@ export function openSettingsSheet({ api, values, demo, tor, keepSharing, backgro
         openPasscodeSheet({
           title: lock.hasDuress ? "Change duress passcode" : "Set a duress passcode",
           intro:
-            "A second passcode for a moment when someone makes you open Starling. Entering it on the lock screen erases everything on this device, instantly and silently, and shows a fresh install. There is no undo and no way back in. It only guards the passcode path: biometric unlock still opens the app normally, so if a forced unlock is in your threat model, turn biometrics off too.",
+            "A second passcode for a moment when someone makes you open Kestrel. Entering it on the lock screen erases everything on this device, instantly and silently, and shows a fresh install. There is no undo and no way back in. It only guards the passcode path: biometric unlock still opens the app normally, so if a forced unlock is in your threat model, turn biometrics off too.",
           cta: "Save duress passcode",
           confirm: true,
           onSubmit: async (pc) => {
@@ -2584,14 +2584,14 @@ export function openSettingsSheet({ api, values, demo, tor, keepSharing, backgro
       relayField.append(relayIn);
       gAdv.append(
         relayField,
-        el("p", "field-note", "Point Starling at your own relay if you run one. The relay source ships with the app, so anyone can host it. Leave this empty for the default. A change applies the next time Starling starts."),
+        el("p", "field-note", "Point Kestrel at your own relay if you run one. The relay source ships with the app, so anyone can host it. Leave this empty for the default. A change applies the next time Kestrel starts."),
       );
     }
     if (tor) {
       gAdv.append(
         switchRow({
           label: "Route through Orbot",
-          note: "Sends relay and map traffic through Orbot's Tor proxy on this device. Needs Orbot installed with Power User Mode on. Orbot's per-app VPN mode also covers Starling with this off.",
+          note: "Sends relay and map traffic through Orbot's Tor proxy on this device. Needs Orbot installed with Power User Mode on. Orbot's per-app VPN mode also covers Kestrel with this off.",
           value: tor.enabled,
           onChange: (v) => onChange("tor", v),
         }),
@@ -2602,14 +2602,14 @@ export function openSettingsSheet({ api, values, demo, tor, keepSharing, backgro
   // Danger
   if (onExport && !demo) {
     const gData = group("Your data");
-    const expBtn = btn("btn btn-secondary", "See everything Starling has");
+    const expBtn = btn("btn btn-secondary", "See everything Kestrel has");
     expBtn.dataset.testid = "settings-export";
     expBtn.addEventListener("click", onExport);
     gData.append(
       el(
         "p",
         "field-note",
-        "One readable file: profile, settings, places, circle names, who you trust. No positions, because Starling stores none, and no keys, ever.",
+        "One readable file: profile, settings, places, circle names, who you trust. No positions, because Kestrel stores none, and no keys, ever.",
       ),
       expBtn,
     );
@@ -2663,7 +2663,7 @@ export function openSettingsSheet({ api, values, demo, tor, keepSharing, backgro
   const panicBox = el("div", "confirm-box");
   panicBox.hidden = true;
   panicBox.append(
-    el("p", "ov-note", "Erases the circle secret, your identity, and all Starling data from this device, then reloads. One residual: street-map tiles your browser cached may remain in its own cache. The Off-grid basemap never loads any. There is no undo. Hold the button to confirm."),
+    el("p", "ov-note", "Erases the circle secret, your identity, and all Kestrel data from this device, then reloads. One residual: street-map tiles your browser cached may remain in its own cache. The Off-grid basemap never loads any. There is no undo. Hold the button to confirm."),
   );
   const holdBtn = btn("btn btn-danger btn-hold", "Hold to erase everything");
   holdToFire(holdBtn, { ms: 1500, onFire: onPanic });
@@ -2692,10 +2692,10 @@ export function openSettingsSheet({ api, values, demo, tor, keepSharing, backgro
     outLink(AUTHOR.name, AUTHOR.url),
     madeAfter,
     " \u00b7 ",
-    outLink(t("Source code"), "https://github.com/munzzyy/starling"),
+    outLink(t("Source code"), "https://github.com/sam2-s/kestrel"),
   );
   gAbout.append(
-    el("p", "about-version", `Starling ${VERSION}`),
+    el("p", "about-version", `Kestrel ${VERSION}`),
     credit,
     el("p", "ov-note", "Your positions are encrypted on this device with a key only your circle holds. There are no accounts, no phone numbers, and no server that can read where you are. Sharing is off until you turn it on, and stopping is one tap."),
     el("p", "ov-note", "The relay that passes your updates along stores only encrypted data it cannot read, and deletes it after 24 hours. The protocol is open, so anyone can check these claims against the code."),

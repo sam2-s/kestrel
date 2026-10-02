@@ -341,7 +341,7 @@ export function parseSafetyQr(text) {
 //   match     the keys pinned under that id give exactly these digits
 //   mismatch  they give other digits: somebody in between, or a reinstall
 //   unknown   nobody pinned under that id (or keys that will not decode)
-//   invalid   not a Starling safety number code
+//   invalid   not a Kestrel safety number code
 // Only "match" may lead to a verified mark, and that goes through the same
 // markVerified the manual compare uses.
 export async function checkSafetyQr(text, pinned) {

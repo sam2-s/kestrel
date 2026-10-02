@@ -35,7 +35,7 @@ function check(name, cond, detail = "") {
 
 // What addJavascriptInterface exposes, plus the two calls this is about.
 // __stopRecord stands in for the prefs file LocationService writes.
-const BRIDGE = `window.StarlingNative = {
+const BRIDGE = `window.KestrelNative = {
   platform: () => "android",
   version: () => "e2e",
   torSupported: () => false,
@@ -89,8 +89,8 @@ function connect(wsUrl) {
 const READ_CARD = `(() => {
   const btn = document.querySelector('[data-testid="alert-stop-record-ok"]');
   const card = btn?.closest("div");
-  const state = window.__starlingState();
-  const item = window.__starlingInternals.alertItems().find((i) => i.id === "stop-record");
+  const state = window.__kestrelState();
+  const item = window.__kestrelInternals.alertItems().find((i) => i.id === "stop-record");
   let seen = false;
   if (card) {
     const r = card.getBoundingClientRect();
@@ -106,15 +106,15 @@ const READ_CARD = `(() => {
     text: item ? item.text : null,
     seen,
     toasts: [...document.querySelectorAll("#toasts *")].map((t) => t.textContent.trim()).filter(Boolean),
-    errs: (window.__starlingErrors || []).slice(0, 5),
+    errs: (window.__kestrelErrors || []).slice(0, 5),
   };
 })()`;
 
 async function main() {
-  const profile = mkdtempSync(path.join(tmpdir(), "starling-resume-e2e-"));
+  const profile = mkdtempSync(path.join(tmpdir(), "kestrel-resume-e2e-"));
   const server = spawn("node", [path.join(ROOT, "test", "serve_local.mjs"), String(HTTP_PORT)], {
     cwd: ROOT,
-    env: { ...process.env, STARLING_TEST: "1", RATE_POST_MIN: "100000", RATE_GET_MIN: "100000" },
+    env: { ...process.env, KESTREL_TEST: "1", RATE_POST_MIN: "100000", RATE_GET_MIN: "100000" },
     stdio: "ignore",
   });
   const chromium = spawn("chromium", [
@@ -145,7 +145,7 @@ async function main() {
 
     await c.send("Page.navigate", { url: BASE + "/" });
     await waitFor(
-      () => c.evalJs("!!window.__starlingApi && !document.getElementById('screen-onboarding').hidden"),
+      () => c.evalJs("!!window.__kestrelApi && !document.getElementById('screen-onboarding').hidden"),
       "onboarding on screen",
     );
     await c.evalJs(`document.querySelector('[data-testid="onboarding-create"]').click()`);
@@ -158,19 +158,19 @@ async function main() {
       });
     })()`);
     await c.evalJs(`document.querySelector('[data-testid="identity-save"]').click()`);
-    await waitFor(() => c.evalJs("window.__starlingState && window.__starlingState().screen === 'map'"), "map after create");
+    await waitFor(() => c.evalJs("window.__kestrelState && window.__kestrelState().screen === 'map'"), "map after create");
     await c.evalJs(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`);
     await sleep(500);
 
     // Sharing on, from the button, with the wrapper feeding fixes the way the
     // location service does.
     await c.evalJs(`(() => {
-      setInterval(() => window.__starlingFix && window.__starlingFix(JSON.stringify({
+      setInterval(() => window.__kestrelFix && window.__kestrelFix(JSON.stringify({
         lat: 45.06, lon: 13.23, ts: Date.now(), acc: 8,
       })), 1000);
       document.querySelector('[data-testid="share-toggle"]').click();
     })()`);
-    await waitFor(() => c.evalJs("window.__starlingState().sharing === true"), "sharing on");
+    await waitFor(() => c.evalJs("window.__kestrelState().sharing === true"), "sharing on");
     const armed = await c.evalJs(`(async () => {
       const { dbGet } = await import("/js/store.js");
       const a = await dbGet("shareArmed");
@@ -185,8 +185,8 @@ async function main() {
       source: `window.__stopRecord = JSON.stringify({ route: "swipe", at: Date.now() - 45000 });`,
     });
     await c.send("Page.reload");
-    await waitFor(() => c.evalJs("window.__starlingState && window.__starlingState().screen === 'map'"), "map after reopen");
-    await waitFor(() => c.evalJs("window.__starlingState().sharing === true"), "sharing back on after the reopen");
+    await waitFor(() => c.evalJs("window.__kestrelState && window.__kestrelState().screen === 'map'"), "map after reopen");
+    await waitFor(() => c.evalJs("window.__kestrelState().sharing === true"), "sharing back on after the reopen");
 
     const after = await c.evalJs(READ_CARD);
     check("the share is on again without anybody touching the toggle", after.sharing === true);
@@ -202,14 +202,14 @@ async function main() {
     // The other half of the rule, on the same page: a Stop the person pressed
     // is a decision, and reopening does not undo it.
     await c.evalJs(`document.querySelector('[data-testid="share-toggle"]').click()`);
-    await waitFor(() => c.evalJs("window.__starlingState().sharing === false"), "sharing off");
+    await waitFor(() => c.evalJs("window.__kestrelState().sharing === false"), "sharing off");
     await c.evalJs(`document.querySelector('[data-testid="share-toggle"]').click()`);
-    await waitFor(() => c.evalJs("window.__starlingState().sharing === true"), "sharing on again");
+    await waitFor(() => c.evalJs("window.__kestrelState().sharing === true"), "sharing on again");
     await c.send("Page.addScriptToEvaluateOnNewDocument", {
       source: `window.__stopRecord = JSON.stringify({ route: "notif", at: Date.now() });`,
     });
     await c.send("Page.reload");
-    await waitFor(() => c.evalJs("window.__starlingState && window.__starlingState().screen === 'map'"), "map after the second reopen");
+    await waitFor(() => c.evalJs("window.__kestrelState && window.__kestrelState().screen === 'map'"), "map after the second reopen");
     await sleep(2500);
     const stopped = await c.evalJs(READ_CARD);
     check("a Stop from the notification is not undone by reopening", stopped.sharing === false);

@@ -1,12 +1,15 @@
 # Security
 
-Starling encrypts everyone's location on their own device. If you find a way to
+Kestrel encrypts everyone's location on their own device. If you find a way to
 break that, I want to know before anyone else does.
 
 ## Reporting a vulnerability
 
-Email **Munzzyy1@proton.me** with what you found and how to reproduce it.
-I will acknowledge your report within 3 business days.
+Open a private report at
+<https://github.com/sam2-s/kestrel/security/advisories/new> with what you
+found and how to reproduce it. Reports get an acknowledgment within 3
+business days. Anything rooted in the Starling code this fork inherits can
+also go to **Munzzyy1@proton.me**, upstream's published contact.
 
 This project follows coordinated disclosure. Please give me a 90 day window
 from acknowledgment to fix the issue and ship a release before any public
@@ -20,7 +23,7 @@ so and you will not be named anywhere.
 
 ## Safe harbor
 
-Testing against your own Starling circles, your own self-hosted relay, or
+Testing against your own Kestrel circles, your own self-hosted relay, or
 the public demo without touching other users' data is authorized. I will
 not pursue legal action or report you for good-faith research conducted
 under this policy: no accessing, modifying, or exfiltrating another
@@ -72,7 +75,7 @@ Good things to report:
 ## What is already known
 
 `docs/THREAT-MODEL.md` (including its "Android app deltas" section) and
-`docs/AUDIT.md` list the limits Starling does not try to solve and the gaps
+`docs/AUDIT.md` list the limits Kestrel does not try to solve and the gaps
 that are already tracked: no human security audit, network and timing
 metadata visible to the relay, the SOS-and-circle correlation signal from
 firing a beacon on the same IP as the circle channel, forward secrecy bounded
@@ -87,7 +90,7 @@ not treated as new findings.
 
 ## No bounty
 
-There is no money behind this. Starling is not backed by a company or a
+There is no money behind this. Kestrel is not backed by a company or a
 bug bounty budget, and I am not going to pretend otherwise by dangling a
 reward I cannot pay. What you get is a fast, honest response, a fix, and
 credit if you want it.

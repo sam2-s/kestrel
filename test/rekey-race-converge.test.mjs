@@ -107,7 +107,7 @@ async function circleWith(self, peers) {
     gens.push(await openGeneration({ seed: new Uint8Array(seed), g: 0, e0 }));
   }
   state.genRoster = new Set(state.pinned.keys());
-  window.__starlingErrors.length = 0;
+  window.__kestrelErrors.length = 0;
   return gens;
 }
 

@@ -23,11 +23,11 @@ function stubClipboard() {
 test("the wrapper's share sheet gets the whole line, and the clipboard is left alone", async () => {
   const writes = stubClipboard();
   const shared = [];
-  globalThis.StarlingNative = { shareText: (text) => (shared.push(text), true) };
+  globalThis.KestrelNative = { shareText: (text) => (shared.push(text), true) };
   try {
     await shareLink(LINK, "Follow my location:", "Help link copied");
   } finally {
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
   }
   assert.deepEqual(shared, [`Follow my location: ${LINK}`]);
   assert.deepEqual(writes, [], "the native path never writes the clipboard");
@@ -35,22 +35,22 @@ test("the wrapper's share sheet gets the whole line, and the clipboard is left a
 
 test("with no window for the sheet, the link is copied instead", async () => {
   const writes = stubClipboard();
-  globalThis.StarlingNative = { shareText: () => false };
+  globalThis.KestrelNative = { shareText: () => false };
   try {
     await shareLink(LINK, "Follow my location:", "Help link copied");
   } finally {
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
   }
   assert.deepEqual(writes, [LINK]);
 });
 
 test("an older wrapper without the method copies, as before", async () => {
   const writes = stubClipboard();
-  globalThis.StarlingNative = {};
+  globalThis.KestrelNative = {};
   try {
-    await shareLink(LINK, "Join my circle on Starling:", "Invite link copied");
+    await shareLink(LINK, "Join my circle on Kestrel:", "Invite link copied");
   } finally {
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
   }
   assert.deepEqual(writes, [LINK]);
 });
@@ -58,8 +58,8 @@ test("an older wrapper without the method copies, as before", async () => {
 test("the bridge answers false with no window on screen, caps the text, and starts a chooser", async () => {
   const { readFileSync } = await import("node:fs");
   const kt = (name) =>
-    readFileSync(new URL(`../android/app/src/main/kotlin/app/starlingmap/${name}`, import.meta.url), "utf8");
-  const bridge = kt("StarlingBridge.kt");
+    readFileSync(new URL(`../android/app/src/main/kotlin/app/kestrel/map/${name}`, import.meta.url), "utf8");
+  const bridge = kt("KestrelBridge.kt");
   assert.match(bridge, /fun shareText\(text: String\): Boolean \{\s*val a = activity \?: return false\s*if \(!PageHost\.windowShown \|\| PageHost\.activity !== a\) return false\s*val body = text\.take\(2000\)/);
   assert.match(
     kt("MainActivity.kt"),

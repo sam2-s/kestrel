@@ -481,11 +481,15 @@ same trade.
 
 ## Distribution, honestly
 
+(Upstream's distribution, kept as written; this fork ships only the GitHub
+releases route, under its own signing key, and is not on F-Droid, Play or
+iOS. See the README.)
+
 - **GitHub release and the direct APK at starlingmap.app.** Both work today
   and are signed with the same key (`AllowedAPKSigningKeys` in
-  `docs/fdroid/app.starlingmap.yml`).
+  `docs/fdroid/app.kestrel.map.yml`).
 - **F-Droid.** Live since 2026-09-23 at
-  <https://f-droid.org/packages/app.starlingmap/>, shipping the same
+  <https://f-droid.org/packages/app.kestrel.map/>, shipping the same
   developer-signed APK after a reproducible-build check; see "F-Droid ships
   the developer's APK, and trails a release" above.
 - **Google Play.** In progress, not live as of this writing.

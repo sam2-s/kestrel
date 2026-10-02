@@ -27,14 +27,14 @@ function withHiddenPage(fn) {
 test("an SOS notification asks the bridge to be urgent; routine ones do not", () => {
   state.demo = false;
   const calls = [];
-  globalThis.StarlingNative = { notify: (...args) => calls.push(args) };
+  globalThis.KestrelNative = { notify: (...args) => calls.push(args) };
   try {
     withHiddenPage(() => {
-      internals.notifyEvent("SOS from Juno", "Open Starling to see their live position.", "sos-1", true);
-      internals.notifyEvent("Someone wants to join", "Open Starling to check their number and let them in.", "join-req");
+      internals.notifyEvent("SOS from Juno", "Open Kestrel to see their live position.", "sos-1", true);
+      internals.notifyEvent("Someone wants to join", "Open Kestrel to check their number and let them in.", "join-req");
     });
   } finally {
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
   }
   assert.equal(calls.length, 2);
   assert.equal(calls[0][3], true, "the SOS call must mark itself urgent");
@@ -43,7 +43,7 @@ test("an SOS notification asks the bridge to be urgent; routine ones do not", ()
 
 test("notifyEvent never reaches the bridge while the page is visible or the demo is running", () => {
   const calls = [];
-  globalThis.StarlingNative = { notify: (...args) => calls.push(args) };
+  globalThis.KestrelNative = { notify: (...args) => calls.push(args) };
   try {
     document.visibilityState = "visible";
     state.demo = false;
@@ -57,6 +57,6 @@ test("notifyEvent never reaches the bridge while the page is visible or the demo
   } finally {
     state.demo = false;
     document.visibilityState = "visible";
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
   }
 });

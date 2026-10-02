@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const MIN = Number(
-  readFileSync(join(root, "android/app/src/main/kotlin/app/starlingmap/SystemCheck.kt"), "utf8").match(/const val MIN_WEBVIEW = (\d+)/)[1],
+  readFileSync(join(root, "android/app/src/main/kotlin/app/kestrel/map/SystemCheck.kt"), "utf8").match(/const val MIN_WEBVIEW = (\d+)/)[1],
 );
 
 const JS = [

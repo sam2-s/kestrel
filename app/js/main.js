@@ -151,18 +151,18 @@ import { createDemo, demoPlaces, DEMO_CENTER } from "./demo.js";
 import { t, translateDom, loadLocale, setLocale, resolveLocale, LOCALE_CHOICES } from "./i18n.js";
 
 // Error collector so automated checks can read back anything that went wrong.
-window.__starlingErrors = [];
+window.__kestrelErrors = [];
 
 // The wrapper's one way to say something human to the page (an Orbot that
 // never answered, for instance). Bundled app code only; it becomes a toast.
-window.__starlingNotice = (message, kind) => {
+window.__kestrelNotice = (message, kind) => {
   if (typeof message === "string" && message) ui.toast(message.slice(0, 200), kind === "info" ? "info" : "warn");
 };
 window.addEventListener("error", (e) => {
-  window.__starlingErrors.push(String(e.message || e.error || "error"));
+  window.__kestrelErrors.push(String(e.message || e.error || "error"));
 });
 window.addEventListener("unhandledrejection", (e) => {
-  window.__starlingErrors.push(`unhandled: ${String(e.reason)}`);
+  window.__kestrelErrors.push(`unhandled: ${String(e.reason)}`);
 });
 
 const $ = ui.$;
@@ -488,14 +488,14 @@ function applyTheme() {
 const onSchemeChange = () => {
   if (state.settings.theme === "auto") applyTheme();
 };
-globalThis.__starlingScheme = onSchemeChange;
+globalThis.__kestrelScheme = onSchemeChange;
 // Safari < 14 only has the legacy MediaQueryList.addListener.
 if (mqLight.addEventListener) mqLight.addEventListener("change", onSchemeChange);
 else if (mqLight.addListener) mqLight.addListener(onSchemeChange);
 
 // ------------------------------------------------------------ debug hook
 
-if (debugHooks()) window.__starlingState = () => {
+if (debugHooks()) window.__kestrelState = () => {
   const now = Date.now();
   return {
     screen: state.screen,
@@ -544,7 +544,7 @@ if (debugHooks()) window.__starlingState = () => {
 };
 
 // Debug hook: frame everyone with a position, like the demo's opening shot.
-if (debugHooks()) window.__starlingFit = () => {
+if (debugHooks()) window.__kestrelFit = () => {
   if (!mapView) return false;
   const pts = members().filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lon));
   if (state.me && Number.isFinite(state.me.lat)) pts.push({ lat: state.me.lat, lon: state.me.lon });
@@ -594,7 +594,7 @@ function showNotice({ title, body, actions = [] }) {
     notice.dataset.testid = "notice-screen";
     const wrap = ui.el("div", "ob-wrap");
     const hero = ui.el("div", "ob-hero");
-    hero.append(ui.el("h1", "ob-wordmark", "starling"));
+    hero.append(ui.el("h1", "ob-wordmark", "kestrel"));
     hero.append(ui.el("p", "ob-tagline"));
     wrap.append(hero);
     wrap.append(ui.el("div", "ob-actions"));
@@ -687,7 +687,7 @@ function render() {
     try {
       s.refresh();
     } catch (e) {
-      window.__starlingErrors.push(`sheet: ${String(e)}`);
+      window.__kestrelErrors.push(`sheet: ${String(e)}`);
     }
   }
   if (state.screen !== "map" || !mapView) return;
@@ -786,8 +786,8 @@ function renderYou() {
   // A message the circle has not received yet outranks everything else on
   // this line: the gap between what you did and what they see IS the news.
   const owed = outbox.pending();
-  if (owed.includes("sos")) sub = t("SOS queued. Starling keeps trying...");
-  else if (owed.includes("checkin")) sub = t("Check-in queued. Starling keeps trying...");
+  if (owed.includes("sos")) sub = t("SOS queued. Kestrel keeps trying...");
+  else if (owed.includes("checkin")) sub = t("Check-in queued. Kestrel keeps trying...");
   else if (owed.includes("bye")) sub = `${t("Not sharing")} · ${t("telling your circle...")}`;
   $("#you-sub").textContent = sub;
   const toggle = byTestid("share-toggle");
@@ -823,7 +823,7 @@ function renderYou() {
   if (state.geoDenied && isBundled() && !gw.dataset.wrapped) {
     gw.dataset.wrapped = "1";
     $(".notice-text", gw).textContent = t(
-      "Location permission is off for Starling. Open the app's settings, allow location, then come back and tap Start sharing.",
+      "Location permission is off for Kestrel. Open the app's settings, allow location, then come back and tap Start sharing.",
     );
     // The shortcut button needs the bridge; the iOS wrapper has none, and a
     // button that does nothing is worse than the sentence alone.
@@ -944,9 +944,9 @@ function alertItems() {
     const restricted = route === "system" && currentHealth()?.battery === "restricted";
     const offerKeep = route === "lock" && canKeepSharing() && !keptPastClose();
     const lockText = [
-      t("Starling locked itself while you were away, and a locked Starling holds no keys, so the lock ended your share."),
+      t("Kestrel locked itself while you were away, and a locked Kestrel holds no keys, so the lock ended your share."),
       back ? t("Unlocking put it back on.") : "",
-      offerKeep ? t("Tap Keep sharing to let shares run while Starling is closed or locked. The lock then waits until the share ends.") : "",
+      offerKeep ? t("Tap Keep sharing to let shares run while Kestrel is closed or locked. The lock then waits until the share ends.") : "",
     ]
       .filter(Boolean)
       .join(" ");
@@ -958,13 +958,13 @@ function alertItems() {
             ? t("The app was closed while sharing was on, which stopped it, and opening it again put it back on. If closing it was not you, check who has access to this phone.")
             : t("The app was closed while sharing was on, which stops it every time. If that was not you, check who has access to this phone.")
           : route === "renderer"
-            ? t("Android shut down the part of Starling that sends your position, so the share stopped. Nobody did this by hand.")
+            ? t("Android shut down the part of Kestrel that sends your position, so the share stopped. Nobody did this by hand.")
             : route === "system"
               ? restricted
-                ? t("Android stopped Starling in the background because its battery use is set to Restricted, and that ends every share a minute after you leave the app. Set it to Unrestricted in the app's settings.")
-                : t("Android stopped Starling in the background, so the share ended. Nobody did this by hand.")
+                ? t("Android stopped Kestrel in the background because its battery use is set to Restricted, and that ends every share a minute after you leave the app. Set it to Unrestricted in the app's settings.")
+                : t("Android stopped Kestrel in the background, so the share ended. Nobody did this by hand.")
               : route === "stalled"
-                ? t("Android kept Starling from running in the background, so your circle stopped getting your location and the share ended. Nobody did this by hand.")
+                ? t("Android kept Kestrel from running in the background, so your circle stopped getting your location and the share ended. Nobody did this by hand.")
                 : t("Someone tapped Stop on the sharing notification. If that was not you, check who has access to this phone.");
     const actions = [
       {
@@ -1015,7 +1015,7 @@ function alertItems() {
       id: "lock-share",
       kind: "info",
       title: t("The app lock will end this share"),
-      text: `${t("Starling locks itself after a while in the background, and a locked Starling holds no keys, so the lock would end this share.")} ${t("Tap Keep sharing to let shares run while Starling is closed or locked. The lock then waits until the share ends.")}`,
+      text: `${t("Kestrel locks itself after a while in the background, and a locked Kestrel holds no keys, so the lock would end this share.")} ${t("Tap Keep sharing to let shares run while Kestrel is closed or locked. The lock then waits until the share ends.")}`,
       actions: [
         { label: "Keep sharing", variant: "btn-primary", testid: "alert-lock-share-keep", onClick: keepSharingFromCard },
         { label: "Not now", testid: "alert-lock-share-later", onClick: markLockShareNoted },
@@ -1053,7 +1053,7 @@ function alertItems() {
       id: "chain-wipe-failed",
       kind: "warn",
       title: "That circle expired, and this phone could not erase it",
-      text: "Its keys are out of memory and nothing you send arrives any more, but this device could not delete them from its own storage, most likely because there is no room left. They are still on the disk. Free some space and open Starling again to finish clearing it, or use Panic to erase everything now.",
+      text: "Its keys are out of memory and nothing you send arrives any more, but this device could not delete them from its own storage, most likely because there is no room left. They are still on the disk. Free some space and open Kestrel again to finish clearing it, or use Panic to erase everything now.",
       actions: [{ label: "Try again", testid: "alert-wipe-retry", onClick: () => syncRatchet() }],
     });
   }
@@ -1074,7 +1074,7 @@ function alertItems() {
       id: "chain-destroyed",
       kind: "warn",
       title: "This phone has been offline too long",
-      text: "Starling throws a circle's keys away rather than carry them for weeks, and this device passed that point while it was away. Its keys are gone from memory and from storage, and so is this phone's own identity in that circle, so nothing you send arrives and nothing sent to you can be read. Ask somebody in the circle for a fresh invite link.",
+      text: "Kestrel throws a circle's keys away rather than carry them for weeks, and this device passed that point while it was away. Its keys are gone from memory and from storage, and so is this phone's own identity in that circle, so nothing you send arrives and nothing sent to you can be read. Ask somebody in the circle for a fresh invite link.",
       actions,
     });
   }
@@ -1091,7 +1091,7 @@ function alertItems() {
       id: "chain-wiped",
       kind: "warn",
       title: "One of your circles expired while this phone was away",
-      text: t("Starling throws a circle's keys away rather than carry them for weeks, and that circle passed the point where this device could still read it, so it was erased from this phone. {kept} Ask somebody in that circle for a fresh invite link if you want back in.", { kept }),
+      text: t("Kestrel throws a circle's keys away rather than carry them for weeks, and that circle passed the point where this device could still read it, so it was erased from this phone. {kept} Ask somebody in that circle for a fresh invite link if you want back in.", { kept }),
       // It stays until it is read, like a re-key somebody else made, and then
       // it goes. Nothing else cleared it, so it sat on the map for good.
       //
@@ -1224,8 +1224,8 @@ function alertItems() {
       kind: "info",
       title: t("Sharing{run}, and this screen has to stay on", { run }),
       text: state.foreground.wakeLock
-        ? "This phone gives a web app no way to send a position in the background, so Starling only sends while it is open and in front. It is holding the screen awake for you."
-        : "This phone gives a web app no way to send a position in the background, so Starling only sends while it is open and in front. It could not hold the screen awake, so stop the phone locking itself.",
+        ? "This phone gives a web app no way to send a position in the background, so Kestrel only sends while it is open and in front. It is holding the screen awake for you."
+        : "This phone gives a web app no way to send a position in the background, so Kestrel only sends while it is open and in front. It could not hold the screen awake, so stop the phone locking itself.",
     });
   }
 
@@ -1263,9 +1263,9 @@ function alertItems() {
     items.push({
       id: "install",
       kind: "info",
-      title: "Add Starling to your home screen",
+      title: "Add Kestrel to your home screen",
       text: isIOSSafari()
-        ? "In a tab, iOS can throw your circle's keys away when storage runs low, and sharing stops the moment you switch apps. Tap the Share button, then Add to Home Screen, and open Starling from there."
+        ? "In a tab, iOS can throw your circle's keys away when storage runs low, and sharing stops the moment you switch apps. Tap the Share button, then Add to Home Screen, and open Kestrel from there."
         : "In a tab, iOS can throw your circle's keys away when storage runs low. Open this page in Safari, tap Share, then Add to Home Screen.",
       actions: [{ label: "Not now", testid: "alert-install-no", onClick: dismissInstall }],
     });
@@ -1409,7 +1409,7 @@ function renderOnboarding() {
       ? isIOSSafari()
         ? "In a Safari tab, iOS can throw your circle's keys away when storage runs low, and sharing stops the moment you switch apps. Tap the Share button, then Add to Home Screen."
         : "In a browser tab, iOS can throw your circle's keys away when storage runs low. Open this page in Safari, tap Share, then Add to Home Screen."
-      : "Installed, Starling opens without browser chrome and its storage is harder for the browser to evict. Nothing is uploaded either way.");
+      : "Installed, Kestrel opens without browser chrome and its storage is harder for the browser to evict. Nothing is uploaded either way.");
     const go = $("#install-go");
     go.hidden = !canPrompt;
     if (canPrompt && !installWired) {
@@ -1618,7 +1618,7 @@ async function enterCircle() {
   // Last, and deliberately not awaited into the boot path: a resume needs the
   // sender and the poller this call just armed, and nothing above it should
   // wait on a geolocation prompt.
-  resumeShareIfArmed().catch((e) => window.__starlingErrors.push(`share resume: ${String(e)}`));
+  resumeShareIfArmed().catch((e) => window.__kestrelErrors.push(`share resume: ${String(e)}`));
 }
 
 // The one call that actually destroys expired key material. Nothing else walks
@@ -1655,7 +1655,7 @@ async function persistRatchet() {
   try {
     await writeGenAtRest();
   } catch (e) {
-    window.__starlingErrors.push(`ratchet: ${String(e)}`);
+    window.__kestrelErrors.push(`ratchet: ${String(e)}`);
   }
 }
 
@@ -1731,7 +1731,7 @@ async function onChainDestroyed() {
     // over a disk that still holds the chain key.
     state.chainDestroyed = false;
     state.chainWipeFailed = { at: Date.now(), why: String(e) };
-    window.__starlingErrors.push(`self destruct: ${String(e)}`);
+    window.__kestrelErrors.push(`self destruct: ${String(e)}`);
   }
   render();
 }
@@ -1761,7 +1761,7 @@ async function hasDestroyMark() {
   try {
     return !!(await dbGet(DESTROYED_KEY));
   } catch (e) {
-    window.__starlingErrors.push(`destroy mark: ${String(e)}`);
+    window.__kestrelErrors.push(`destroy mark: ${String(e)}`);
     return false;
   }
 }
@@ -1781,7 +1781,7 @@ async function clearDestroyMark() {
   } catch (e) {
     // A mark nobody clears only ever makes a later launch say it again, so a
     // failure here is noted rather than raised.
-    window.__starlingErrors.push(`destroy mark: ${String(e)}`);
+    window.__kestrelErrors.push(`destroy mark: ${String(e)}`);
   }
 }
 
@@ -1849,7 +1849,7 @@ async function leaveDestroyedCircle(circles) {
   state.circleShare = packShare(null);
   if (res.pending) {
     ui.toast(
-      "That circle expired, and this device could not erase all of it. Open Starling again to finish clearing it.",
+      "That circle expired, and this device could not erase all of it. Open Kestrel again to finish clearing it.",
       "warn",
     );
   }
@@ -1865,7 +1865,7 @@ function showDestroyedNotice() {
     : "";
   showNotice({
     title: "Those keys are gone",
-    body: t("Starling throws a circle's keys away rather than carry them for weeks, and this phone passed that point while it was away. The circle was erased from this device, and there was no other circle to fall back to.{lockLine} Ask somebody for a fresh invite link, or start a new circle.", { lockLine }),
+    body: t("Kestrel throws a circle's keys away rather than carry them for weeks, and this phone passed that point while it was away. The circle was erased from this device, and there was no other circle to fall back to.{lockLine} Ask somebody for a fresh invite link, or start a new circle.", { lockLine }),
     actions: [
       { label: "Join with a link", variant: "btn-primary", testid: "notice-destroyed-join", onClick: promptPasteInvite },
       { label: "Start a new circle", testid: "notice-destroyed-new", onClick: promptCreate },
@@ -1925,7 +1925,7 @@ function persistPinned() {
   if (state.locked || !state.gen || circleBusy || state.chainDestroyed) return;
   pinnedWrite = pinnedWrite
     .then(() => writeRecordAtRest(kv, lockCtx(), PINNED_SLOT, packPinned(state.pinned)))
-    .catch((e) => window.__starlingErrors.push(`pinned: ${String(e)}`));
+    .catch((e) => window.__kestrelErrors.push(`pinned: ${String(e)}`));
 }
 
 function setupNet() {
@@ -1976,7 +1976,7 @@ function setupNet() {
     onChange: () => {
       checkAlerts();
       persistRatchet();
-      reconcileRoster().catch((e) => window.__starlingErrors.push(`roster: ${String(e)}`));
+      reconcileRoster().catch((e) => window.__kestrelErrors.push(`roster: ${String(e)}`));
       render();
     },
     onStatus: (s) => {
@@ -1996,7 +1996,7 @@ function onRelayRetired() {
   teardownNet();
   stopInviteWatch();
   showNotice({
-    title: "Update Starling",
+    title: "Update Kestrel",
     body: "The relay no longer speaks this version's protocol, so this app cannot connect and your circle cannot see you. Install the current version to get back on. Your circle and its keys are untouched on this device.",
   });
 }
@@ -2085,7 +2085,7 @@ async function onControl(senderId, msg, epoch) {
   // one defence this threat model offers against a compromised member, so the
   // record is refused here rather than filtered somewhere downstream.
   if (circleControl(msg) !== "rekey") {
-    if (msg?.t === "member") window.__starlingErrors.push("member record on the circle channel: dropped");
+    if (msg?.t === "member") window.__kestrelErrors.push("member record on the circle channel: dropped");
     return;
   }
   // A member admitted by the last re-key is pinned the first time they post,
@@ -2103,7 +2103,7 @@ async function onControl(senderId, msg, epoch) {
   // has to be admitted by a member, through a re-key somebody else signs,
   // before anything they sign moves this circle.
   if (!state.genRoster.has(senderId) || !state.pinned.has(senderId)) {
-    window.__starlingErrors.push("rekey from an unpinned member: dropped");
+    window.__kestrelErrors.push("rekey from an unpinned member: dropped");
     return;
   }
   if (msg.to !== state.identity.memberId) return; // somebody else's wrap
@@ -2162,7 +2162,7 @@ async function persistGeneration() {
   try {
     await writeGenAtRest();
   } catch (e) {
-    window.__starlingErrors.push(`genRoster: ${String(e)}`);
+    window.__kestrelErrors.push(`genRoster: ${String(e)}`);
   }
 }
 
@@ -2306,9 +2306,9 @@ async function commitGeneration(prev, watch) {
       prev.ratchet.destroy();
     }
   } catch (e) {
-    window.__starlingErrors.push(`rekey persist: ${String(e)}`);
+    window.__kestrelErrors.push(`rekey persist: ${String(e)}`);
     ui.toast(
-      "Your circle has new keys, but they could not be saved. If Starling restarts you will need a fresh invitation.",
+      "Your circle has new keys, but they could not be saved. If Kestrel restarts you will need a fresh invitation.",
       "warn",
     );
   }
@@ -2395,7 +2395,7 @@ async function onGraceControl(senderId, msg, epoch) {
   // The same bar the live channel sets: a generation only moves for a member
   // it started with, never for a key that arrived with the message.
   if (!grace.genRoster.has(senderId) || !grace.pinned.has(senderId)) {
-    window.__starlingErrors.push("rekey from an unpinned member on the old channel: dropped");
+    window.__kestrelErrors.push("rekey from an unpinned member on the old channel: dropped");
     return;
   }
   if (senderId === grace.by) return; // our own wrap coming back to us
@@ -2649,7 +2649,7 @@ async function savePlaces() {
   try {
     await writePlacesAtRest();
   } catch (e) {
-    window.__starlingErrors.push(`places: ${String(e)}`);
+    window.__kestrelErrors.push(`places: ${String(e)}`);
   }
   render();
 }
@@ -2784,7 +2784,7 @@ function showV1Notice() {
   state.v1Data = true;
   showNotice({
     title: "Start fresh",
-    body: "This device holds a circle from an older version of Starling. The encryption changed, and old circles cannot be carried across: the keys mean different things now. Erase this device's Starling data and create or join a circle again. Nothing was sent anywhere.",
+    body: "This device holds a circle from an older version of Kestrel. The encryption changed, and old circles cannot be carried across: the keys mean different things now. Erase this device's Kestrel data and create or join a circle again. Nothing was sent anywhere.",
     actions: [{ label: "Erase and start over", variant: "btn-primary", testid: "notice-action", onClick: panic }],
   });
 }
@@ -2839,7 +2839,7 @@ async function enableLock(passcode) {
     // leaves a plaintext copy behind; loadPlaces sweeps that up at the next
     // unlock by adopting and resealing it.
     await writePlacesAtRest().catch((e) => {
-      window.__starlingErrors.push(`places: ${String(e)}`);
+      window.__kestrelErrors.push(`places: ${String(e)}`);
     });
     return true;
   } finally {
@@ -2873,7 +2873,7 @@ async function disableLock(passcode) {
     // Back to the plaintext form, and the sealed copy off the disk: with the
     // lock gone it could never be opened again anyway.
     await writePlacesAtRest().catch((e) => {
-      window.__starlingErrors.push(`places: ${String(e)}`);
+      window.__kestrelErrors.push(`places: ${String(e)}`);
     });
     return true;
   } finally {
@@ -3286,7 +3286,7 @@ async function rewrapPasscodeIfNeeded(pc) {
     await dbSet("lock", state.lock);
     return true;
   } catch (e) {
-    window.__starlingErrors.push(`rewrap: ${String(e)}`);
+    window.__kestrelErrors.push(`rewrap: ${String(e)}`);
     return false;
   }
 }
@@ -3367,7 +3367,7 @@ function forgotPasscode() {
     ui.el(
       "p",
       "ov-note",
-      "Starling cannot recover a forgotten passcode. Nothing about your circle leaves your device unencrypted, so there is no reset link. You can erase this device and rejoin your circle from a fresh invite. Hold the button to erase everything on this device.",
+      "Kestrel cannot recover a forgotten passcode. Nothing about your circle leaves your device unencrypted, so there is no reset link. You can erase this device and rejoin your circle from a fresh invite. Hold the button to erase everything on this device.",
     ),
   );
   const hold = ui.el("button", "btn btn-danger btn-hold", "Hold to erase this device");
@@ -3418,7 +3418,7 @@ function armAutoLock() {
   }, left);
 }
 
-// A locked Starling holds no keys, so a share cannot outlive the lock. With
+// A locked Kestrel holds no keys, so a share cannot outlive the lock. With
 // nobody looking the lock can wait a moment: the share ends the way Android
 // ending it does, bye first, a record and a notice, and it comes back after
 // unlock. Someone who comes back meanwhile gets the lock at once.
@@ -3459,7 +3459,7 @@ function keepSharingFromCard() {
   markLockShareNoted();
   // A timer already counting would still end the share.
   armAutoLock();
-  ui.toast(t("Shares now keep running while Starling is closed or locked."));
+  ui.toast(t("Shares now keep running while Kestrel is closed or locked."));
 }
 
 function markLockShareNoted() {
@@ -3650,7 +3650,7 @@ async function saveStartRelay(value) {
     return false;
   }
   await adoptRelay(norm || "");
-  ui.toast(norm ? t("Starling will use {host}.", { host: new URL(norm).host }) : "Starling will use the default relay.");
+  ui.toast(norm ? t("Kestrel will use {host}.", { host: new URL(norm).host }) : "Kestrel will use the default relay.");
   return true;
 }
 
@@ -3688,13 +3688,13 @@ function showRelayMismatch(relay) {
       "p",
       "ov-note",
       current
-        ? t("Your circles use {host}, and Starling talks to one relay at a time.", { host: new URL(current).host })
-        : t("Your circles use the default relay, and Starling talks to one relay at a time."),
+        ? t("Your circles use {host}, and Kestrel talks to one relay at a time.", { host: new URL(current).host })
+        : t("Your circles use the default relay, and Kestrel talks to one relay at a time."),
     ),
     ui.el(
       "p",
       "ov-note",
-      t("To join it, put {relay} in Settings, Advanced, Relay, restart Starling and open the link again. Your other circles stop updating while it is set.", { relay }),
+      t("To join it, put {relay} in Settings, Advanced, Relay, restart Kestrel and open the link again. Your other circles stop updating while it is set.", { relay }),
     ),
   );
 }
@@ -3711,7 +3711,7 @@ function inviteFromText(text) {
 function inviteScanProblem(text) {
   if (inviteFromText(text)) return null;
   if (parseSafetyQr(text)) return t("That is a safety number code, not an invite.");
-  return t("That is not a Starling invite code.");
+  return t("That is not a Kestrel invite code.");
 }
 
 function joinFromScan(text, join = promptJoin) {
@@ -3733,7 +3733,7 @@ function promptPasteInvite() {
   input.autocomplete = "off";
   input.setAttribute("aria-describedby", "paste-invite-error");
   field.append(input);
-  const err = ui.el("p", "ov-warn-note", "That does not look like a Starling invite link.");
+  const err = ui.el("p", "ov-warn-note", "That does not look like a Kestrel invite link.");
   err.id = "paste-invite-error";
   err.setAttribute("role", "alert");
   err.hidden = true;
@@ -3958,7 +3958,7 @@ function startInviteWatch() {
       selfId: state.identity.memberId,
       onMessage: (obj, from) => onJoinRequest(inv, obj, from),
     });
-  })().catch((e) => window.__starlingErrors.push(`invite: ${String(e)}`));
+  })().catch((e) => window.__kestrelErrors.push(`invite: ${String(e)}`));
 }
 
 // A join request. It is never acted on automatically: the whole point of a v2
@@ -3981,7 +3981,7 @@ async function onJoinRequest(inv, obj, from) {
   });
   if (!seen.ok) {
     if (seen.reason === "expired") await burnInvite();
-    if (seen.reason === "bad-key") window.__starlingErrors.push("join request with a malformed agreement key: dropped");
+    if (seen.reason === "bad-key") window.__kestrelErrors.push("join request with a malformed agreement key: dropped");
     return;
   }
   state.joinRequests.push({
@@ -4000,7 +4000,7 @@ async function onJoinRequest(inv, obj, from) {
   // OUT of the notification: it is whatever the requester typed, anyone
   // holding the link can send one, and the lock screen is no place to render
   // an unauthenticated stranger's chosen words.
-  notifyEvent(t("Someone wants to join"), t("Open Starling to check their number and let them in."), "join-req");
+  notifyEvent(t("Someone wants to join"), t("Open Kestrel to check their number and let them in."), "join-req");
   render();
 }
 
@@ -4044,7 +4044,7 @@ async function acceptJoin(req) {
       channel = await openWelcomeChannel(inviteSecret, req);
     } catch (e) {
       zero(inviteSecret);
-      window.__starlingErrors.push(`welcome slot: ${String(e)}`);
+      window.__kestrelErrors.push(`welcome slot: ${String(e)}`);
       // Nothing irreversible has happened, so the circle is exactly as it was
       // and the person is told that in those words. A cap that refused us a
       // slot is permanent for this channel, so that link is finished and it is
@@ -4078,7 +4078,7 @@ async function acceptJoin(req) {
       await sendWelcome(channel, req, out.seed, out.members);
       delivered = true;
     } catch (e) {
-      window.__starlingErrors.push(`welcome: ${String(e)}`);
+      window.__kestrelErrors.push(`welcome: ${String(e)}`);
     } finally {
       zero(out.seed);
       zero(inviteSecret);
@@ -4098,7 +4098,7 @@ async function acceptJoin(req) {
       try {
         back = await doRekey(undoAdmission(req.memberId));
       } catch (e) {
-        window.__starlingErrors.push(`welcome rollback: ${String(e)}`);
+        window.__kestrelErrors.push(`welcome rollback: ${String(e)}`);
       }
       if (back) {
         ui.toast("Could not send them the keys, so nobody was let in. Your link still works, so try again.", "warn");
@@ -4386,7 +4386,7 @@ function startJoinWatch() {
         // a lost join was invisible. The messages stay in the buffer and the
         // next round opens a fresh seed out of them, so this one is zeroed
         // rather than left in memory, and the failure is written down.
-        window.__starlingErrors.push(`join: ${String(e)}`);
+        window.__kestrelErrors.push(`join: ${String(e)}`);
       } finally {
         zero(welcome.seed);
       }
@@ -4490,7 +4490,7 @@ async function completeJoin(j, welcome) {
   // exists by the re-key that admitted this device, but only its own posts
   // carry its keys, and until they land nobody can attribute anything it
   // signs, including a re-key. A check-in carries no position.
-  sendMsg("checkin").catch((e) => window.__starlingErrors.push(`hello: ${String(e)}`));
+  sendMsg("checkin").catch((e) => window.__kestrelErrors.push(`hello: ${String(e)}`));
   return true;
 }
 
@@ -4539,7 +4539,7 @@ async function withCircleGuardWaiting(fn, ms = 15000) {
   const until = Date.now() + ms;
   while (circleBusy) {
     if (Date.now() > until) {
-      window.__starlingErrors.push("circle guard held too long: change dropped");
+      window.__kestrelErrors.push("circle guard held too long: change dropped");
       return false;
     }
     await new Promise((r) => setTimeout(r, 50));
@@ -4752,7 +4752,7 @@ const leaveCircle = () =>
     // must never tell.
     ui.toast(
       res.pending
-        ? "You left, but this device could not erase everything. Open Starling again to finish clearing it."
+        ? "You left, but this device could not erase everything. Open Kestrel again to finish clearing it."
         : "You left the circle.",
       res.pending ? "warn" : "info",
     );
@@ -4814,7 +4814,7 @@ async function openInvite() {
   try {
     link = await createInvite();
   } catch (e) {
-    window.__starlingErrors.push(`invite: ${String(e)}`);
+    window.__kestrelErrors.push(`invite: ${String(e)}`);
   }
   if (!link) {
     ui.toast("Could not make an invite link. Try again.", "warn");
@@ -4952,7 +4952,7 @@ async function onSettingChange(key, value) {
     state.relay = norm || "";
     if (norm) await dbSet("relay", norm);
     else await dbDel("relay");
-    ui.toast("Relay saved. It applies the next time Starling starts.");
+    ui.toast("Relay saved. It applies the next time Kestrel starts.");
   } else if (key === "tor") {
     try {
       native()?.setTor(!!value);
@@ -4990,7 +4990,7 @@ async function onSettingChange(key, value) {
     if (key === "theme") applyTheme();
     if (key === "lang") {
       const code = resolveLocale(value);
-      await loadLocale(code).catch((e) => window.__starlingErrors.push(`locale: ${String(e)}`));
+      await loadLocale(code).catch((e) => window.__kestrelErrors.push(`locale: ${String(e)}`));
       setLocale(code);
       translateDom();
       ui.toast(t("Language saved. Reopen settings to see them translated too."));
@@ -5250,7 +5250,7 @@ async function armShare() {
   } catch (e) {
     // A share that cannot be written down still runs; it just will not come
     // back by itself, which is the behaviour this replaces.
-    window.__starlingErrors.push(`share arm: ${String(e)}`);
+    window.__kestrelErrors.push(`share arm: ${String(e)}`);
   }
 }
 
@@ -5258,7 +5258,7 @@ async function disarmShare() {
   try {
     await dbDel(SHARE_ARMED);
   } catch (e) {
-    window.__starlingErrors.push(`share disarm: ${String(e)}`);
+    window.__kestrelErrors.push(`share disarm: ${String(e)}`);
   }
 }
 
@@ -5351,7 +5351,7 @@ function endTimedShare() {
   }
   setSharing(false)
     .then(() => ui.toast(t("Timed share ended. Your circle sees you stopped sharing.")))
-    .catch((e) => window.__starlingErrors.push(`timed share end: ${String(e)}`))
+    .catch((e) => window.__kestrelErrors.push(`timed share end: ${String(e)}`))
     .finally(render);
 }
 
@@ -5532,7 +5532,7 @@ const CAMERA_ASK_TIMEOUT_MS = 120000;
 let cameraTokenN = 0;
 const cameraPending = new Map();
 
-window.__starlingCamera = (token, granted) => {
+window.__kestrelCamera = (token, granted) => {
   const p = cameraPending.get(token);
   if (!p) return;
   cameraPending.delete(token);
@@ -5592,7 +5592,7 @@ function healthCard(problem) {
       id: "health-restricted",
       kind: "warn",
       title: t("Android will stop this share when you leave the app"),
-      text: t("Starling's battery use is set to Restricted, so Android stops a share about a minute after the app leaves the screen. Set it to Unrestricted in the app's settings to keep sharing with the screen off."),
+      text: t("Kestrel's battery use is set to Restricted, so Android stops a share about a minute after the app leaves the screen. Set it to Unrestricted in the app's settings to keep sharing with the screen off."),
       actions: [{ label: "Open app settings", variant: "btn-primary", testid: "alert-health-battery", onClick: openBatterySettings }, waveOff],
     };
   }
@@ -5600,7 +5600,7 @@ function healthCard(problem) {
     return {
       id: "health-coarse",
       kind: "warn",
-      title: t("Starling only has your approximate location"),
+      title: t("Kestrel only has your approximate location"),
       text: t("With approximate location, Android updates your position roughly and only about every ten minutes, so your circle sees you jump. Allow precise location in the app's settings for a live share."),
       actions: [{ label: "Open app settings", variant: "btn-primary", testid: "alert-health-precise", onClick: openAppSettingsPage }, waveOff],
     };
@@ -5619,7 +5619,7 @@ function healthCard(problem) {
       id: "health-optimized",
       kind: "info",
       title: t("Keep sharing with the screen off"),
-      text: t("Android may pause Starling to save battery while your screen is off, and your circle would stop seeing you move. Letting Starling run in the background stops that. It only makes a difference while you share."),
+      text: t("Android may pause Kestrel to save battery while your screen is off, and your circle would stop seeing you move. Letting Kestrel run in the background stops that. It only makes a difference while you share."),
       actions: [
         { label: "Allow", variant: "btn-primary", testid: "alert-health-allow", onClick: askBatteryExemption },
         { label: "Not now", testid: "alert-health-later", onClick: markBatteryAsked },
@@ -5928,7 +5928,7 @@ async function doCheckin() {
       // A clock rejection retries forever pointlessly; anything else is
       // worth chasing from RAM until it lands.
       outbox.enqueue("checkin");
-      ui.toast("Check-in not delivered yet. Starling keeps trying.", "warn");
+      ui.toast("Check-in not delivered yet. Kestrel keeps trying.", "warn");
     }
   }
   render();
@@ -5958,7 +5958,7 @@ async function fireSos() {
     await noteSendFailure(e);
     if (!state.clockError) {
       outbox.enqueue("sos");
-      ui.toast("SOS not delivered yet. Starling keeps trying.", "warn");
+      ui.toast("SOS not delivered yet. Kestrel keeps trying.", "warn");
     }
   }
   // Your circle is who you chose in advance. An emergency is often the
@@ -6162,7 +6162,7 @@ async function startCheckinTimer(minutes) {
   try {
     await dbSet(CHECKIN_KEY, checkinTimer);
   } catch (e) {
-    window.__starlingErrors.push(`timer: ${String(e)}`);
+    window.__kestrelErrors.push(`timer: ${String(e)}`);
   }
   scheduleDueTimer();
   render();
@@ -6174,7 +6174,7 @@ async function startCheckinTimer(minutes) {
   } catch (e) {
     await noteSendFailure(e);
     if (!state.clockError && type !== "loc") outbox.enqueue(type);
-    ui.toast(t("Timer set, but your circle does not have it yet. Starling keeps trying."), "warn");
+    ui.toast(t("Timer set, but your circle does not have it yet. Kestrel keeps trying."), "warn");
   }
   render();
   return true;
@@ -6315,7 +6315,7 @@ function checkAlerts() {
       sosCardHidden.delete(rec.id);
       ui.toast(t("SOS from {who}", { who: rec.name || t("a member") }), "sos");
       navigator.vibrate?.([160, 80, 160, 80, 240]);
-      notifyEvent(t("SOS from {who}", { who }), t("Open Starling to see their live position."), `sos-${rec.id}`, true);
+      notifyEvent(t("SOS from {who}", { who }), t("Open Kestrel to see their live position."), `sos-${rec.id}`, true);
     } else if (st === "checkin" && prev === "sos") {
       ui.toast(t("{who} checked in", { who }));
       cancelEventNotification(`sos-${rec.id}`);
@@ -6575,15 +6575,15 @@ const api = {
   addBeaconViewer,
   revokeBeaconViewer,
 };
-if (debugHooks()) window.__starlingApi = api;
+if (debugHooks()) window.__kestrelApi = api;
 
 // The internals the automated checks drive directly, because the alternative
 // is a check that exercises a copy of the rule instead of the rule. The last
 // round of defects shipped exactly that way: a member cap verified against a
 // bare Map while the app passed a duck-typed store with no size on it. Nothing
-// here is a new exposure, since __starlingApi already hands out the live state
+// here is a new exposure, since __kestrelApi already hands out the live state
 // object, and script running in this page is inside the circle already.
-if (debugHooks()) window.__starlingInternals = {
+if (debugHooks()) window.__kestrelInternals = {
   state,
   pinnedStore,
   roster: () => roster,
@@ -6687,7 +6687,7 @@ document.addEventListener("visibilitychange", () => {
   syncRatchet().catch(() => {});
   healthAt = 0;
   if (!state.sharing && (state.stopRecord?.route === "system" || state.stopRecord?.route === "stalled")) {
-    resumeShareIfArmed().catch((e) => window.__starlingErrors.push(`share resume: ${String(e)}`));
+    resumeShareIfArmed().catch((e) => window.__kestrelErrors.push(`share resume: ${String(e)}`));
   }
   render();
 });
@@ -6844,7 +6844,7 @@ async function boot() {
     if (typeof relay === "string") state.relay = relay;
     state.installDismissed = !!noInstall;
   } catch (e) {
-    window.__starlingErrors.push(`store: ${String(e)}`);
+    window.__kestrelErrors.push(`store: ${String(e)}`);
   }
   // The API base is fixed for this run before any poller or sender is built.
   setApiBase(state.relay);
@@ -6852,7 +6852,7 @@ async function boot() {
   // Language before anything paints: every screen starts hidden, so the
   // static page translates exactly once with no flash of English.
   const locale = resolveLocale(state.settings.lang);
-  await loadLocale(locale).catch((e) => window.__starlingErrors.push(`locale: ${String(e)}`));
+  await loadLocale(locale).catch((e) => window.__kestrelErrors.push(`locale: ${String(e)}`));
   setLocale(locale);
   translateDom();
 
@@ -6994,7 +6994,7 @@ async function boot() {
         else showScreen("onboarding");
       }
     } catch (e) {
-      window.__starlingErrors.push(`enter: ${String(e)}`);
+      window.__kestrelErrors.push(`enter: ${String(e)}`);
       showScreen("onboarding");
     }
 
@@ -7010,7 +7010,7 @@ async function boot() {
   render();
 
   if (persistenceBroken()) {
-    ui.toast("This browser is blocking storage. Starling runs, but nothing is saved after you close it.", "warn");
+    ui.toast("This browser is blocking storage. Kestrel runs, but nothing is saved after you close it.", "warn");
   }
 
   if (params.get("sheet") === "full" && sheet) sheet.snapTo("full", false);
@@ -7024,7 +7024,7 @@ async function boot() {
   // registration is web-only.
   if (!insecureContext && !isBundled() && "serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js").catch((e) => {
-      window.__starlingErrors.push(`sw: ${String(e)}`);
+      window.__kestrelErrors.push(`sw: ${String(e)}`);
     });
     // The cache-first shell means a returning visitor's first load after a
     // deploy runs the previous build; reload once when the fresh worker takes
@@ -7042,13 +7042,13 @@ async function boot() {
 }
 
 boot().catch((e) => {
-  window.__starlingErrors.push(`boot: ${String(e)}`);
+  window.__kestrelErrors.push(`boot: ${String(e)}`);
   // Last resort: never leave a blank page.
   try {
     state.screen = "onboarding";
     $("#screen-onboarding").hidden = false;
     $("#screen-map").hidden = true;
-    ui.toast("Starling hit a problem while starting.", "warn");
+    ui.toast("Kestrel hit a problem while starting.", "warn");
   } catch {
     // the error above is already recorded
   }

@@ -8,17 +8,17 @@ import { startWatch } from "../app/js/geo.js";
 
 function withGlobals({ visibility, native }, fn) {
   const prevDoc = Object.getOwnPropertyDescriptor(globalThis, "document");
-  const prevNative = Object.getOwnPropertyDescriptor(globalThis, "StarlingNative");
+  const prevNative = Object.getOwnPropertyDescriptor(globalThis, "KestrelNative");
   globalThis.document = { visibilityState: visibility };
-  if (native === undefined) delete globalThis.StarlingNative;
-  else globalThis.StarlingNative = native;
+  if (native === undefined) delete globalThis.KestrelNative;
+  else globalThis.KestrelNative = native;
   try {
     return fn();
   } finally {
     if (prevDoc) Object.defineProperty(globalThis, "document", prevDoc);
     else delete globalThis.document;
-    if (prevNative) Object.defineProperty(globalThis, "StarlingNative", prevNative);
-    else delete globalThis.StarlingNative;
+    if (prevNative) Object.defineProperty(globalThis, "KestrelNative", prevNative);
+    else delete globalThis.KestrelNative;
   }
 }
 
@@ -53,13 +53,13 @@ function watch({ throwOnStart = false } = {}) {
     },
     stopLocation() {},
   };
-  globalThis.StarlingNative = native;
+  globalThis.KestrelNative = native;
   const stop = startWatch(
     (f) => seen.fixes.push(f),
     (e) => seen.errors.push(e),
     { onSignal: (s) => seen.signals.push(s), afterEach: () => seen.after++ },
   );
-  const push = (obj) => globalThis.__starlingFix?.(typeof obj === "string" ? obj : JSON.stringify(obj));
+  const push = (obj) => globalThis.__kestrelFix?.(typeof obj === "string" ? obj : JSON.stringify(obj));
   return { seen, push, stop };
 }
 
@@ -74,7 +74,7 @@ test("a tick and the location switch arrive as signals, not as fixes or errors",
     assert.equal(seen.errors.length, 0);
   } finally {
     stop();
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
   }
 });
 
@@ -90,13 +90,13 @@ test("a stop carries how it happened, and an unmarked one is the notification's"
     assert.equal(seen.errors[1].route, "notif");
   } finally {
     stop();
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
   }
 });
 
 test("every push is answered, including one the page could not make sense of or choked on", () => {
   const seen = { after: 0 };
-  globalThis.StarlingNative = { startLocation() {}, stopLocation() {} };
+  globalThis.KestrelNative = { startLocation() {}, stopLocation() {} };
   const stop = startWatch(
     () => {
       throw new Error("render blew up");
@@ -105,13 +105,13 @@ test("every push is answered, including one the page could not make sense of or 
     { afterEach: () => seen.after++ },
   );
   try {
-    globalThis.__starlingFix("not json at all");
-    assert.throws(() => globalThis.__starlingFix(JSON.stringify({ lat: 1, lon: 2, ts: 3 })), /render blew up/);
-    globalThis.__starlingFix(JSON.stringify({ tick: true }));
+    globalThis.__kestrelFix("not json at all");
+    assert.throws(() => globalThis.__kestrelFix(JSON.stringify({ lat: 1, lon: 2, ts: 3 })), /render blew up/);
+    globalThis.__kestrelFix(JSON.stringify({ tick: true }));
     assert.equal(seen.after, 3, "the wrapper hears back after each one, or it would read the page as frozen");
   } finally {
     stop();
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
   }
 });
 
@@ -120,9 +120,9 @@ test("a start the bridge refuses is a native error, so the share stops instead o
   try {
     assert.equal(seen.errors.length, 1);
     assert.equal(seen.errors[0].native, true);
-    assert.equal(typeof globalThis.__starlingFix, "undefined", "and nothing is left listening");
+    assert.equal(typeof globalThis.__kestrelFix, "undefined", "and nothing is left listening");
   } finally {
     stop();
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
   }
 });

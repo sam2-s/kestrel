@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for looking. Starling is a small, dependency-free codebase and I want to
+Thanks for looking. Kestrel is a small, dependency-free codebase and I want to
 keep it that way.
 
 ## Getting set up

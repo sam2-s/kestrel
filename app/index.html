@@ -19,37 +19,36 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Starling">
+<meta name="apple-mobile-web-app-title" content="Kestrel">
 <link rel="canonical" href="https://starlingmap.app/">
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="Starling">
-<meta property="og:title" content="Starling: private location sharing">
+<meta property="og:site_name" content="Kestrel">
+<meta property="og:title" content="Kestrel: private location sharing">
 <meta property="og:description" content="End to end encrypted location sharing for your circle. No accounts, no tracking. Free Android app, live demo in the browser.">
 <meta property="og:url" content="https://starlingmap.app/">
 <meta property="og:image" content="https://starlingmap.app/icons/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="The Starling logo: private location sharing for your circle.">
+<meta property="og:image:alt" content="The Kestrel logo: private location sharing for your circle.">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Starling: private location sharing">
+<meta name="twitter:title" content="Kestrel: private location sharing">
 <meta name="twitter:description" content="End to end encrypted location sharing for your circle. No accounts, no tracking.">
 <meta name="twitter:image" content="https://starlingmap.app/icons/og.png">
-<meta name="twitter:image:alt" content="The Starling logo: private location sharing for your circle.">
-<title>Starling: private location sharing</title>
+<meta name="twitter:image:alt" content="The Kestrel logo: private location sharing for your circle.">
+<title>Kestrel: private location sharing</title>
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
-  "name": "Starling",
+  "name": "Kestrel",
   "operatingSystem": "Android",
   "applicationCategory": "UtilitiesApplication",
   "description": "Private, end to end encrypted location sharing for your circle. No accounts, no tracking.",
   "url": "https://starlingmap.app/",
-  "downloadUrl": "https://github.com/munzzyy/starling/releases/latest/download/starling.apk",
-  "installUrl": "https://f-droid.org/packages/app.starlingmap/",
+  "downloadUrl": "https://github.com/sam2-s/kestrel/releases/latest/download/kestrel.apk",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
-  "author": { "@type": "Person", "name": "Munzzyy", "url": "https://github.com/munzzyy" },
-  "license": "https://github.com/munzzyy/starling/blob/main/LICENSE"
+  "author": { "@type": "Person", "name": "Kestrel authors", "url": "https://github.com/sam2-s" },
+  "license": "https://github.com/sam2-s/kestrel/blob/main/LICENSE"
 }
 </script>
 <link rel="manifest" href="manifest.webmanifest">
@@ -83,7 +82,7 @@
 <section id="screen-lock" class="screen" data-testid="lock-screen" hidden>
   <div class="lock-wrap">
     <div class="lock-logo-ring">
-      <img class="lock-logo" src="icons/starling.svg" alt="" width="64" height="64">
+      <img class="lock-logo" src="icons/kestrel.svg" alt="" width="64" height="64">
     </div>
     <h1 class="lock-title" data-i18n>Locked</h1>
     <p class="lock-sub" id="lock-sub" data-i18n>Enter your passcode to open your circle.</p>
@@ -104,8 +103,8 @@
 <section id="screen-oldweb" class="screen" hidden>
   <div class="ob-wrap">
     <div class="ob-hero">
-      <h1 class="ob-wordmark">starling</h1>
-      <p class="ob-tagline">This browser is missing WebCrypto or IndexedDB, which Starling needs for its encryption. Update Android System WebView or switch to a current browser, then reopen Starling.</p>
+      <h1 class="ob-wordmark">kestrel</h1>
+      <p class="ob-tagline">This browser is missing WebCrypto or IndexedDB, which Kestrel needs for its encryption. Update Android System WebView or switch to a current browser, then reopen Kestrel.</p>
     </div>
   </div>
 </section>
@@ -115,9 +114,9 @@
     <div class="ob-hero">
       <div class="lnd-aurora" aria-hidden="true"><span class="lnd-bird"></span><span class="lnd-bird"></span><span class="lnd-bird"></span><span class="lnd-bird"></span><span class="lnd-bird"></span><span class="lnd-bird"></span><span class="lnd-bird"></span></div>
       <div class="ob-logo-ring">
-        <img class="ob-logo" src="icons/starling.svg" alt="" width="84" height="84">
+        <img class="ob-logo" src="icons/kestrel.svg" alt="" width="84" height="84">
       </div>
-      <h1 class="ob-wordmark">starling</h1>
+      <h1 class="ob-wordmark">kestrel</h1>
       <p class="ob-tagline" data-i18n>Your people, on your map. Nobody else.</p>
       <p class="lnd-subline">Create a circle, send one link, and watch each other arrive.
         Nothing about where you are ever leaves your phone in a form anyone else can read.
@@ -146,13 +145,13 @@
         <p class="land-card-sub">Circles now live in the Android app, and the website no longer
           opens them. The data sits untouched in this browser's storage, encrypted at rest only if
           you had set a passcode. If you are done with it, erase it.</p>
-        <button type="button" class="btn btn-secondary" data-testid="landing-erase">Erase this browser's Starling data</button>
+        <button type="button" class="btn btn-secondary" data-testid="landing-erase">Erase this browser's Kestrel data</button>
       </div>
 
       <div class="land-card land-note" id="join-waiting" data-testid="join-waiting" hidden>
         <h2 class="land-card-title">Waiting to be let in</h2>
         <p class="land-card-sub" id="join-waiting-text">Your request is sitting on the relay. It waits
-          until the person who invited you next opens Starling and accepts it; read them the number
+          until the person who invited you next opens Kestrel and accepts it; read them the number
           below when they do.</p>
         <span class="safety-cap">Your number</span>
         <div class="safety" id="join-waiting-safety" data-testid="join-waiting-safety"></div>
@@ -162,9 +161,9 @@
       </div>
 
       <div class="land-card land-note" id="install-card" data-testid="install-card" hidden>
-        <h2 class="land-card-title">Add Starling to your home screen</h2>
+        <h2 class="land-card-title">Add Kestrel to your home screen</h2>
         <p class="land-card-sub" id="install-text"></p>
-        <button type="button" class="btn btn-secondary" id="install-go" data-testid="install-go" hidden>Install Starling</button>
+        <button type="button" class="btn btn-secondary" id="install-go" data-testid="install-go" hidden>Install Kestrel</button>
       </div>
     </div>
 
@@ -175,7 +174,7 @@
     </div>
     <p class="ob-footer" data-i18n>End-to-end encrypted. No accounts. Open protocol.</p>
     <div class="ob-about" id="ob-about" hidden>
-      <a class="btn btn-ghost" id="about-site" href="https://starlingmap.app/" data-i18n>What Starling is and how it works &#8599;</a>
+      <a class="btn btn-ghost" id="about-site" href="https://starlingmap.app/" data-i18n>What Kestrel is and how it works &#8599;</a>
       <button type="button" class="btn btn-ghost" data-testid="onboarding-relay" data-i18n>Use your own relay</button>
     </div>
 
@@ -319,12 +318,12 @@
               same length.</li>
             <li>That an SOS and a circle updated at the same instant from the same address. The
               keys cannot be linked; the timing can.</li>
-            <li>That you use Starling at all, from the origin your device talks to.</li>
+            <li>That you use Kestrel at all, from the origin your device talks to.</li>
           </ul>
         </div>
       </div>
       <p class="lnd-honesty-note">Read the full
-        <a href="https://github.com/munzzyy/starling/blob/main/docs/THREAT-MODEL.md">threat model</a>
+        <a href="https://github.com/sam2-s/kestrel/blob/main/docs/THREAT-MODEL.md">threat model</a>
         for exactly what this means and what it does not.</p>
     </section>
 
@@ -393,7 +392,7 @@
         </details>
         <details class="lnd-faq-item">
           <summary>How is this different from mainstream family trackers?</summary>
-          <p>Their servers see every position you ever send. Starling's relay cannot see any of
+          <p>Their servers see every position you ever send. Kestrel's relay cannot see any of
             them, because they never leave your device unencrypted. There is nothing on the relay
             worth selling or worth a breach.</p>
         </details>
@@ -414,21 +413,21 @@
           <p>Yes. The relay is small and open source, and runs on Cloudflare Workers or a plain
             server behind Apache or nginx. Point the app at your own instance and Munzzyy's relay
             never sees your traffic at all. Setup for both is documented in the
-            <a href="https://github.com/munzzyy/starling#deploy">README</a>.</p>
+            <a href="https://github.com/sam2-s/kestrel#deploy">README</a>.</p>
         </details>
         <details class="lnd-faq-item">
           <summary>What happens in an emergency?</summary>
           <p>Hold the SOS button and your circle gets an alert at your live position. On their
-            phones it lands as a notification while Starling runs in the background; a phone that
+            phones it lands as a notification while Kestrel runs in the background; a phone that
             is off or has the app fully closed sees it on the next open, because there is no push
             service to force it awake. You can also open a help beacon, a link that works in any
             browser, for someone outside your circle, and revoke it the moment you are safe.</p>
         </details>
         <details class="lnd-faq-item">
-          <summary>What does Starling not do?</summary>
+          <summary>What does Kestrel not do?</summary>
           <p>No App Store iPhone app yet. No driving reports, speed alerts, or crash detection. No location
             history older than a day, on purpose. If those are the features you need most,
-            Starling is not your app yet, and finding that out here beats finding it out after
+            Kestrel is not your app yet, and finding that out here beats finding it out after
             you switched.</p>
         </details>
       </div>
@@ -438,23 +437,11 @@
       <h2 class="land-card-title">Get the Android app</h2>
       <p class="land-card-sub">Sharing keeps running with the screen off, your fingerprint opens
         the app lock, and a panic wipe clears everything at once. No Google services inside.</p>
-      <a class="lnd-fdroid" data-testid="landing-fdroid"
-        href="https://f-droid.org/packages/app.starlingmap/"><img
-        src="icons/get-it-on-fdroid.png" alt="Get it on F-Droid" width="646" height="250"></a>
-      <p class="land-card-note lnd-fdroid-note">The easy way: F-Droid installs Starling and keeps it
-        updated. A new release can take a few days to reach it.</p>
       <a class="btn btn-secondary land-download" data-testid="landing-download"
-        href="/starling.apk">Download the APK</a>
-      <p class="land-card-note">Served straight from this site; the same file is on the
-        <a href="https://github.com/munzzyy/starling/releases">releases page</a> with its
+        href="https://github.com/sam2-s/kestrel/releases/latest/download/kestrel.apk">Download the APK</a>
+      <p class="land-card-note">Every release is on the
+        <a href="https://github.com/sam2-s/kestrel/releases">releases page</a> with its
         checksum, so you can verify what you installed.</p>
-      <p class="land-card-note">On GrapheneOS or any de-googled phone, add Starling to
-        <a href="https://tern.munzzyy.dev/add/?url=https%3A%2F%2Fgithub.com%2Fmunzzyy%2Fstarling">Tern</a> and it updates itself.</p>
-      <p class="land-card-note">F-Droid ships the same signed APK as GitHub and this site, so
-        you can switch where updates come from without reinstalling.</p>
-      <ul class="lnd-store-chips">
-        <li class="lnd-chip">Google Play: coming</li>
-      </ul>
       <p class="land-card-note">Not ready to install anything yet? <a href="?demo=1">Watch
         the demo right here</a> first.</p>
     </div>
@@ -462,11 +449,11 @@
     <footer class="land-footer web-only">
       <p>Built by <a href="https://github.com/munzzyy">Munzzyy</a></p>
       <nav class="land-links">
-        <a href="https://github.com/munzzyy/starling">Source</a>
-        <a href="https://github.com/munzzyy/starling/blob/main/docs/PROTOCOL.md">Protocol</a>
-        <a href="https://github.com/munzzyy/starling/blob/main/docs/THREAT-MODEL.md">Threat model</a>
+        <a href="https://github.com/sam2-s/kestrel">Source</a>
+        <a href="https://github.com/sam2-s/kestrel/blob/main/docs/PROTOCOL.md">Protocol</a>
+        <a href="https://github.com/sam2-s/kestrel/blob/main/docs/THREAT-MODEL.md">Threat model</a>
         <a href="/privacy">Privacy</a>
-        <a href="https://github.com/munzzyy/starling/blob/main/SECURITY.md">Security</a>
+        <a href="https://github.com/sam2-s/kestrel/blob/main/SECURITY.md">Security</a>
       </nav>
       <section class="land-more" aria-labelledby="land-more-title">
         <h2 class="land-more-title" id="land-more-title">More apps by Munzzyy</h2>
@@ -574,7 +561,7 @@
       </div>
       <div class="nudge" id="nudge" hidden>
         <p class="nudge-title" data-i18n>Just you here so far</p>
-        <p class="nudge-text" data-i18n>Starling only gets good when your people are on the map. Send them your invite link.</p>
+        <p class="nudge-text" data-i18n>Kestrel only gets good when your people are on the map. Send them your invite link.</p>
         <button type="button" class="btn btn-primary btn-small" id="nudge-invite" data-i18n>Invite your people</button>
       </div>
       <div class="sheet-tools">

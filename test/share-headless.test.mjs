@@ -38,7 +38,7 @@ const calls = [];
 
 async function sharing() {
   calls.length = 0;
-  globalThis.StarlingNative = {
+  globalThis.KestrelNative = {
     startLocation: () => calls.push("startLocation"),
     stopLocation: () => calls.push("stopLocation"),
     clearStopRecord: () => {},
@@ -61,7 +61,7 @@ async function sharing() {
   internals.setupNet();
   if (!state.sharing) await internals.setSharing(true);
   assert.equal(state.sharing, true, "sharing is on to begin with");
-  assert.ok(typeof globalThis.__starlingFix === "function", "the wrapper fix sink is armed");
+  assert.ok(typeof globalThis.__kestrelFix === "function", "the wrapper fix sink is armed");
 }
 
 test("stopping a share tears everything down before it waits on storage", async () => {
@@ -94,7 +94,7 @@ test("a timed share ends off the next position, not off its own countdown", asyn
   Date.now = () => realNow() + 61_000;
   try {
     calls.length = 0;
-    globalThis.__starlingFix(JSON.stringify({ lat: 45.06, lon: 13.23, ts: realNow(), acc: 8 }));
+    globalThis.__kestrelFix(JSON.stringify({ lat: 45.06, lon: 13.23, ts: realNow(), acc: 8 }));
     await settle(50);
   } finally {
     Date.now = realNow;
@@ -108,13 +108,13 @@ test("a timed share ends off the next position, not off its own countdown", asyn
 test("a fix inside the window leaves a timed share alone", async () => {
   await sharing();
   internals.setShareWindow(600_000);
-  globalThis.__starlingFix(JSON.stringify({ lat: 45.06, lon: 13.23, ts: Date.now(), acc: 8 }));
+  globalThis.__kestrelFix(JSON.stringify({ lat: 45.06, lon: 13.23, ts: Date.now(), acc: 8 }));
   await settle(50);
   assert.equal(state.sharing, true, "ten minutes left is not a deadline passed");
   assert.ok(internals.shareStatus().deadline > Date.now(), "and the deadline stands");
   await internals.setSharing(false);
   await settle();
-  delete globalThis.StarlingNative;
+  delete globalThis.KestrelNative;
 });
 
 test("a phone that is not moving still posts off the fixes the service pushes", async () => {
@@ -134,16 +134,16 @@ test("a phone that is not moving still posts off the fixes the service pushes", 
       const at = (ms) => (Date.now = () => t0 + ms);
       const fix = { lat: 40.785, lon: -73.968, acc: 5, ts: t0 };
       at(0);
-      globalThis.__starlingFix(JSON.stringify(fix));
+      globalThis.__kestrelFix(JSON.stringify(fix));
       await settle();
       const first = posts.length;
       assert.ok(first >= 1, `steady=${steady}: the first fix posts`);
       at(5000);
-      globalThis.__starlingFix(JSON.stringify({ ...fix, ts: t0 + 5000 }));
+      globalThis.__kestrelFix(JSON.stringify({ ...fix, ts: t0 + 5000 }));
       await settle();
       assert.equal(posts.length, first, `steady=${steady}: same spot inside the interval posts nothing`);
       at(16000);
-      globalThis.__starlingFix(JSON.stringify({ ...fix, ts: t0 + 16000 }));
+      globalThis.__kestrelFix(JSON.stringify({ ...fix, ts: t0 + 16000 }));
       await settle();
       assert.equal(posts.length, first + 1, `steady=${steady}: same spot after the interval posts again`);
     } finally {
@@ -163,10 +163,10 @@ test("auto-lock waits out a share kept past the app closing, and only that", asy
   try {
     internals.armAutoLock();
     assert.equal(internals.lockArmed(), false, "switch on: no lock timer while sharing");
-    globalThis.StarlingNative.keepSharing = () => false;
+    globalThis.KestrelNative.keepSharing = () => false;
     internals.armAutoLock();
     assert.equal(internals.lockArmed(), true, "switch off: the lock timer runs as before");
-    globalThis.StarlingNative.keepSharing = () => true;
+    globalThis.KestrelNative.keepSharing = () => true;
     internals.armAutoLock();
     await internals.setSharing(false);
     assert.equal(internals.lockArmed(), true, "and it arms the moment the kept share ends");

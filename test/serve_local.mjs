@@ -2,7 +2,7 @@
 // shape production has (Workers assets with run_worker_first on /api/*).
 // Not for production.
 //   node test/serve_local.mjs [port]
-// STARLING_TEST=1 additionally registers GET /debug/dump (raw DB rows).
+// KESTREL_TEST=1 additionally registers GET /debug/dump (raw DB rows).
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -13,7 +13,7 @@ import { makeD1 } from "./d1shim.mjs";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP_DIR = path.resolve(HERE, "..", "app");
 const port = Number(process.argv[2]) || 8899;
-const TEST_MODE = process.env.STARLING_TEST === "1";
+const TEST_MODE = process.env.KESTREL_TEST === "1";
 
 const db = makeD1();
 const env = { DB: db, RATE_POST_MIN: process.env.RATE_POST_MIN, RATE_GET_MIN: process.env.RATE_GET_MIN };
@@ -39,7 +39,7 @@ const STATIC_HEADERS = {
 };
 // The wrapper's asset loader sends no Permissions-Policy, so a check that
 // stands in for the app (test/e2e_qrscan.mjs) runs without the site's camera denial.
-if (process.env.STARLING_WRAPPER_HEADERS === "1") delete STATIC_HEADERS["permissions-policy"];
+if (process.env.KESTREL_WRAPPER_HEADERS === "1") delete STATIC_HEADERS["permissions-policy"];
 
 const server = http.createServer(async (req, res) => {
   const chunks = [];
@@ -105,5 +105,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(port, "127.0.0.1", () => {
-  console.log(`starling local on http://127.0.0.1:${port}${TEST_MODE ? " (test mode: /debug/dump on)" : ""}`);
+  console.log(`kestrel local on http://127.0.0.1:${port}${TEST_MODE ? " (test mode: /debug/dump on)" : ""}`);
 });

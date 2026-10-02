@@ -1,6 +1,6 @@
 # Self-hosting the relay on a plain server
 
-Starling's default relay runs on Cloudflare Workers, at starlingmap.app. You
+Kestrel's default relay runs on Cloudflare Workers, at starlingmap.app. You
 do not need Cloudflare, or any specific host, to run your own: the relay is
 a small piece of code in `relay/src/index.js` that reads and writes one SQL
 table, and `relay/server.mjs` runs that exact code under plain Node with a
@@ -43,14 +43,14 @@ the relay if your circle only needs the Android app.
 ## Install and run
 
 ```
-git clone https://github.com/munzzyy/starling.git
+git clone https://github.com/sam2-s/kestrel.git
 cd starling
 npm ci
 node relay/server.mjs
 ```
 
 That starts the relay on `127.0.0.1:8788` with a database file at
-`relay/data/starling.db`, created on first run. It listens on loopback only
+`relay/data/kestrel.db`, created on first run. It listens on loopback only
 by default; the reverse proxy is what faces the internet. Configuration is
 environment variables, matching the vars a Cloudflare deploy sets in
 `relay/wrangler.toml`:
@@ -59,7 +59,7 @@ environment variables, matching the vars a Cloudflare deploy sets in
 |---|---|---|
 | `PORT` | `8788` | TCP port to listen on |
 | `HOST` | `127.0.0.1` | address to bind; keep this loopback behind a proxy |
-| `STARLING_DB_PATH` | `relay/data/starling.db` | the SQLite file; created if missing |
+| `KESTREL_DB_PATH` | `relay/data/kestrel.db` | the SQLite file; created if missing |
 | `TRUST_PROXY` | unset (off) | see below; set to `1` when running behind Apache or nginx |
 | `PUBLIC_ORIGIN` | `http://<HOST>:<PORT>` | the origin the relay treats as its own, for the same-origin check `originAllowed` does. Set this to your public `https://` origin |
 | `RATE_POST_MIN` | 256 | writes per channel per minute; see the comment above it in `relay/src/index.js` for the arithmetic |
@@ -81,7 +81,7 @@ A systemd unit, adjust the paths and user:
 ```ini
 # /etc/systemd/system/starling-relay.service
 [Unit]
-Description=Starling relay
+Description=Kestrel relay
 After=network.target
 
 [Service]
@@ -90,7 +90,7 @@ User=starling
 WorkingDirectory=/opt/starling
 Environment=PORT=8788
 Environment=HOST=127.0.0.1
-Environment=STARLING_DB_PATH=/var/lib/starling/relay.db
+Environment=KESTREL_DB_PATH=/var/lib/starling/relay.db
 Environment=TRUST_PROXY=1
 Environment=PUBLIC_ORIGIN=https://relay.example.org
 ExecStart=/usr/bin/node relay/server.mjs
@@ -178,7 +178,7 @@ is what makes the last hop trustworthy under `TRUST_PROXY=1`.
 
 The Android and iOS apps always have the Settings option for a custom relay:
 enter your relay's `https://` origin (for example
-`https://relay.example.org`), no trailing slash needed, and restart Starling.
+`https://relay.example.org`), no trailing slash needed, and restart Kestrel.
 Everyone in the circle has to use the same relay. On a phone with no circle
 yet, "Use your own relay" on the first screen sets it with no restart, so the
 phone that creates the circle can start on your relay.
@@ -201,7 +201,7 @@ app on a different origin than the relay, add the app's origin to
 
 ## Backups
 
-The database is one file, `STARLING_DB_PATH` (plus `-wal` and `-shm`
+The database is one file, `KESTREL_DB_PATH` (plus `-wal` and `-shm`
 siblings while running). Every row expires within 24 hours regardless, so a
 backup restores very little that is still current.
 

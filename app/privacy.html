@@ -6,13 +6,13 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#0a0d14">
-<meta name="description" content="Starling privacy policy: what the app and relay do and do not know about you.">
-<title>Privacy policy - Starling</title>
+<meta name="description" content="Kestrel privacy policy: what the app and relay do and do not know about you.">
+<title>Privacy policy - Kestrel</title>
 <link rel="canonical" href="https://starlingmap.app/privacy">
 <meta property="og:type" content="article">
-<meta property="og:site_name" content="Starling">
-<meta property="og:title" content="Starling privacy policy">
-<meta property="og:description" content="What the Starling app and relay do and do not know about you.">
+<meta property="og:site_name" content="Kestrel">
+<meta property="og:title" content="Kestrel privacy policy">
+<meta property="og:description" content="What the Kestrel app and relay do and do not know about you.">
 <meta property="og:url" content="https://starlingmap.app/privacy">
 <meta property="og:image" content="https://starlingmap.app/icons/og.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -22,17 +22,17 @@
 </head>
 <body>
 
-<p class="back"><a href="/">Starling</a></p>
+<p class="back"><a href="/">Kestrel</a></p>
 <h1>Privacy policy</h1>
 <p class="effective">Effective 2026-09-30</p>
 
-<p>Starling is a location sharing app built so that the people running it cannot
+<p>Kestrel is a location sharing app built so that the people running it cannot
 see your location, and there is nothing to sell because there is nothing
 collected to sell. This page says exactly what the app and its relay know
 about you, in plain language.</p>
 
 <h2>There is no account</h2>
-<p>Starling does not ask for a name, email address, phone number, or any
+<p>Kestrel does not ask for a name, email address, phone number, or any
 sign-up. There is no user database. A "circle" is created by generating a
 random secret on your device; nothing about you is attached to it.</p>
 
@@ -51,7 +51,7 @@ travel inside that same ciphertext.</p>
   <li>IP addresses making requests, and when they happen.</li>
   <li>Channel identifiers and ciphertext sizes, which are padded to a fixed
   length so they reveal nothing about message content.</li>
-  <li>That a device is using Starling at all, from the origin it connects to.</li>
+  <li>That a device is using Kestrel at all, from the origin it connects to.</li>
 </ul>
 <p>The relay never sees a position, a name, or which people belong to a
 circle together. All ciphertext rows expire automatically after 24 hours,
@@ -70,7 +70,7 @@ request logging on Cloudflare is switched off, but Cloudflare handles the
 traffic it carries under its own privacy policy. Routing the app through
 Orbot keeps your IP address from Cloudflare as well.</p>
 <h2>The website does not handle circles</h2>
-<p>Location sharing happens in the Starling apps only: the Android app, and an
+<p>Location sharing happens in the Kestrel apps only: the Android app, and an
 iOS app you can build from source. This website is a landing page and a
 demo; it will not create or open a circle. The demo runs entirely on your
 device with invented data and makes no network requests, unless you ask it
@@ -96,7 +96,7 @@ along with each position. Nothing is sent while Tor mode is on.</p>
 <h2>What stays only on your device</h2>
 <p>Your circle memberships, the app lock's wrapped key (never the passcode
 itself), cached member positions,
-and any local settings live in your device's local storage only. Starling
+and any local settings live in your device's local storage only. Kestrel
 does not run analytics, crash reporting, or advertising code, and makes no
 network requests beyond the relay and, optionally, map tiles.</p>
 <p>Places, the named spots like Home or School that the app can announce
@@ -111,12 +111,12 @@ operating system on your phone, not through any push service.</p>
 <p>There is no account to delete because there is no account. To leave a
 circle, stop sharing and remove it from your device; its ciphertext on the
 relay expires within 24 hours regardless. Panic wipe, available from the
-app, immediately clears everything Starling has stored on your device. If
+app, immediately clears everything Kestrel has stored on your device. If
 you self-host your own relay, deletion of that relay's data is entirely
 under your own control.</p>
 
 <h2>Nothing is sold or shared</h2>
-<p>Starling does not sell, rent, or share any data with advertisers, data
+<p>Kestrel does not sell, rent, or share any data with advertisers, data
 brokers, or any third party, because it does not have your data to share in
 the first place. The people who run the default relay cannot read your
 location even if compelled to hand over everything they have.</p>
@@ -131,10 +131,10 @@ whatever you choose to do with it.</p>
 <h2>Changes to this policy</h2>
 <p>If this policy changes, the effective date at the top of this page
 changes with it. Material changes will be noted in the project's
-<a href="https://github.com/munzzyy/starling/blob/main/CHANGELOG.md">changelog</a>.</p>
+<a href="https://github.com/sam2-s/kestrel/blob/main/CHANGELOG.md">changelog</a>.</p>
 
 <h2>Contact</h2>
-<p>Questions or concerns: <a href="mailto:Munzzyy1@proton.me">Munzzyy1@proton.me</a>.</p>
+<p>Questions or concerns: <a href="https://github.com/sam2-s/kestrel/issues">open an issue</a>.</p>
 
 </body>
 </html>

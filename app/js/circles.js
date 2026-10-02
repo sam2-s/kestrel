@@ -333,7 +333,7 @@ export const isSealedRecordError = (e) => e instanceof SealedRecordError;
 // publishing. So every fail-closed check below asks whether the key can still
 // protect something.
 //
-// The shape is part of the question: a Starling vault key is 32 bytes of a
+// The shape is part of the question: a Kestrel vault key is 32 bytes of a
 // typed array, and anything else in that field, whatever it is, is not one.
 export function usableVaultKey(key) {
   if (!ArrayBuffer.isView(key) || key.length !== 32) return false;

@@ -3,7 +3,7 @@
 // If IndexedDB cannot open at all, everything falls back to an in-memory map
 // so the app still runs; in that mode nothing survives a reload.
 
-const DB_NAME = "starling";
+const DB_NAME = "kestrel";
 const STORE = "kv";
 
 let dbPromise = null;

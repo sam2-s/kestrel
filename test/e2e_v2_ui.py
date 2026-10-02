@@ -58,7 +58,7 @@ def q(b, script, *args):
 
 def start_server():
     env = dict(os.environ)
-    env.update({"STARLING_TEST": "1", "RATE_POST_MIN": "100000", "RATE_GET_MIN": "100000"})
+    env.update({"KESTREL_TEST": "1", "RATE_POST_MIN": "100000", "RATE_GET_MIN": "100000"})
     logfile = open(os.path.join(tempfile.gettempdir(), "starling-v2ui-server.log"), "w")
     proc = subprocess.Popen(
         ["node", os.path.join(ROOT, "test", "serve_local.mjs"), str(E.HTTP_PORT)],
@@ -159,7 +159,7 @@ def main():
         bb.shot("03-join-waiting.png")
 
         # ------------------------------------------------- A reviews and accepts
-        wait_for(lambda: q(a, "return (window.__starlingState().joinRequests || 0) > 0"),
+        wait_for(lambda: q(a, "return (window.__kestrelState().joinRequests || 0) > 0"),
                  timeout=60, desc="A sees the request", nudge=a.nudge_poll)
         check("request raises an alert on the map",
               q(a, "return !!document.querySelector('[data-alert^=\"join:\"]')"))
@@ -173,23 +173,23 @@ def main():
               "Blair wants to join" in text(a, ".review-title"), repr(text(a, ".review-title")))
         a.shot("05-review.png")
         a.click('[data-testid="join-accept"]')
-        wait_for(lambda: q(a, "return window.__starlingState().pinned === 1"), timeout=40,
+        wait_for(lambda: q(a, "return window.__kestrelState().pinned === 1"), timeout=40,
                  desc="A pinned B")
-        check("accepting re-keyed the circle", q(a, "return window.__starlingState().g") >= 1)
-        check("the invitation was burned", q(a, "return window.__starlingState().invite") is False)
+        check("accepting re-keyed the circle", q(a, "return window.__kestrelState().g") >= 1)
+        check("the invitation was burned", q(a, "return window.__kestrelState().invite") is False)
 
         check("accepting closes the spent invite sheet",
               q(a, "return document.querySelector('[data-testid=\"invite-sheet\"]') === null"))
-        wait_for(lambda: q(bb, "return window.__starlingState().screen === 'map'"), timeout=60,
+        wait_for(lambda: q(bb, "return window.__kestrelState().screen === 'map'"), timeout=60,
                  desc="B lands in the circle", nudge=bb.nudge_poll)
-        check("B pinned A", q(bb, "return window.__starlingState().pinned") == 1)
+        check("B pinned A", q(bb, "return window.__kestrelState().pinned") == 1)
 
         # ------------------------------------------------------- both sharing
         for br in (a, bb):
             br.click('[data-testid="share-toggle"]')
-        wait_for(lambda: q(a, "return window.__starlingState().members.length") == 1, timeout=60,
+        wait_for(lambda: q(a, "return window.__kestrelState().members.length") == 1, timeout=60,
                  desc="A sees B", nudge=a.nudge_poll)
-        wait_for(lambda: q(bb, "return window.__starlingState().members.length") == 1, timeout=60,
+        wait_for(lambda: q(bb, "return window.__kestrelState().members.length") == 1, timeout=60,
                  desc="B sees A", nudge=bb.nudge_poll)
 
         # ---------------------------------------- foreground session card
@@ -237,7 +237,7 @@ def main():
         check("settings has a Keys and history group", "Keys and history" in titles, repr(titles))
         pkg = json.load(open(os.path.join(ROOT, "package.json")))["version"]
         about = q(a, "var n = document.querySelector('.about-version'); return n && n.textContent;")
-        check("About shows the version that is installed", about == "Starling " + pkg, repr(about))
+        check("About shows the version that is installed", about == "Kestrel " + pkg, repr(about))
         hist = q(a, """
             var f = [...document.querySelectorAll('.field')].find(function (n) {
               var l = n.querySelector('.field-label');
@@ -279,12 +279,12 @@ def main():
         check("the high-risk window turns steady sending on in front of you", steady == "true", repr(steady))
         a.shot("09-settings-keys.png")
 
-        gen_before = q(a, "return window.__starlingState().g")
+        gen_before = q(a, "return window.__kestrelState().g")
         a.click('[data-testid="rekey-open"]')
         rk = text(a, '[data-testid="rekey-confirm"]')
         check("new keys now explains itself before it fires", rk == "Make new keys", repr(rk))
         a.click('[data-testid="rekey-confirm"]')
-        wait_for(lambda: q(a, "return window.__starlingState().g") > gen_before, timeout=40,
+        wait_for(lambda: q(a, "return window.__kestrelState().g") > gen_before, timeout=40,
                  desc="A re-keyed")
         a.escape()
 
@@ -300,7 +300,7 @@ def main():
         # keys, so a real change needs a preimage. The state is injected and only
         # the rendering is under test here.
         bb.exec("""
-            var api = window.__starlingApi;
+            var api = window.__kestrelApi;
             var id = [...api.state.pinned.keys()][0];
             api.state.keyChanges.set(id, {
               presented: { alg: "p256", pk: "x", epk: "y" },
@@ -328,7 +328,7 @@ def main():
               q(bb, "return !!document.querySelector('[data-testid=\"key-accept\"]')"))
         bb.shot("12-key-change-sheet.png")
         bb.click('[data-testid="key-accept"]')
-        wait_for(lambda: q(bb, "return window.__starlingState().keyChanges.length") == 0, timeout=15,
+        wait_for(lambda: q(bb, "return window.__kestrelState().keyChanges.length") == 0, timeout=15,
                  desc="B accepted the new keys")
         bb.escape()
 
@@ -367,7 +367,7 @@ def main():
         # about the time, and iOS is not something Firefox can be talked into.
         # Only the rendering is under test.
         a.exec("""
-            window.__starlingApi.state.clockError = { skewMs: 25 * 60000, at: Date.now() };
+            window.__kestrelApi.state.clockError = { skewMs: 25 * 60000, at: Date.now() };
             window.dispatchEvent(new Event("online"));""")
         wait_for(lambda: q(a, "return !!document.querySelector('[data-alert=\"clock\"]')"),
                  timeout=10, desc="A clock alert")
@@ -378,7 +378,7 @@ def main():
               text(a, "#you-sub") == "Not visible: this phone's clock is wrong",
               repr(text(a, "#you-sub")))
         a.exec("""
-            window.__starlingApi.state.clockError = null;
+            window.__kestrelApi.state.clockError = null;
             Object.defineProperty(navigator, "standalone", { value: false, configurable: true });
             window.dispatchEvent(new Event("online"));""")
         wait_for(lambda: q(a, "return !!document.querySelector('[data-alert=\"install\"]')"),
@@ -390,23 +390,23 @@ def main():
         wait_for(lambda: q(a, "return document.querySelector('[data-alert=\"install\"]') === null"),
                  timeout=10, desc="A install nudge dismissed")
         check("the nudge takes an answer and stays gone",
-              q(a, "return window.__starlingApi.state.installDismissed") is True)
+              q(a, "return window.__kestrelApi.state.installDismissed") is True)
 
         # ------------------------------------------------------ console clean
         for br in (a, bb):
             errs = br.errors()
             noisy = [e for e in (errs["__errs"] or []) if "NetworkError" not in e]
-            check(f"{br.name} console clean", not noisy and not errs["__starlingErrors"],
+            check(f"{br.name} console clean", not noisy and not errs["__kestrelErrors"],
                   repr(errs))
 
         # A screenshot of the alert stack itself: the bottom sheet sits at peek
         # for the rest of this run, and its body is inert there by design.
         a.navigate(BASE + "/?sheet=full")
-        wait_for(lambda: q(a, "return window.__starlingState().screen === 'map'"), timeout=30,
+        wait_for(lambda: q(a, "return window.__kestrelState().screen === 'map'"), timeout=30,
                  desc="A reopened")
         a.exec("""
-            window.__starlingApi.state.clockError = { skewMs: 25 * 60000, at: Date.now() };
-            window.__starlingApi.state.installDismissed = false;
+            window.__kestrelApi.state.clockError = { skewMs: 25 * 60000, at: Date.now() };
+            window.__kestrelApi.state.installDismissed = false;
             Object.defineProperty(navigator, "standalone", { value: false, configurable: true });
             window.dispatchEvent(new Event("online"));""")
         wait_for(lambda: q(a, "return document.querySelectorAll('#alerts .notice').length") >= 2,

@@ -728,7 +728,7 @@ test("assetlinks.json is served with the exact type Android verification wants",
   assert.equal(res.headers.get("content-type"), "application/json");
   const body = await res.json();
   assert.equal(body[0].relation[0], "delegate_permission/common.handle_all_urls");
-  assert.equal(body[0].target.package_name, "app.starlingmap");
+  assert.equal(body[0].target.package_name, "app.kestrel.map");
   for (const fp of body[0].target.sha256_cert_fingerprints) {
     assert.match(fp, /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/);
   }

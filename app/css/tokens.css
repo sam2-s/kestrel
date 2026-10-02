@@ -1,8 +1,8 @@
-/* Starling design tokens. Every color, radius, and duration in the app comes
+/* Kestrel design tokens. Every color, radius, and duration in the app comes
    from here. Dark is the primary theme; light is fully supported. */
 
 :root {
-  /* Brand: starling feather iridescence, teal into violet on night ink. */
+  /* Brand: feather iridescence, teal into violet on night ink. */
   --accent: #2dd4bf;
   --accent-2: #8b5cf6;
   --accent-grad: linear-gradient(135deg, #2dd4bf 0%, #60a5fa 55%, #8b5cf6 100%);

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const kt = (name) =>
-  readFileSync(new URL(`../android/app/src/main/kotlin/app/starlingmap/${name}`, import.meta.url), "utf8");
+  readFileSync(new URL(`../android/app/src/main/kotlin/app/kestrel/map/${name}`, import.meta.url), "utf8");
 const ui = () => readFileSync(new URL("../app/js/ui.js", import.meta.url), "utf8");
 
 function fn(src, name) {
@@ -54,7 +54,7 @@ test("the panic wipe deletes both SOS channels", () => {
 });
 
 test("Settings offers the channel page only where the wrapper has it", () => {
-  assert.match(kt("StarlingBridge.kt"), /fun openSosChannelSettings\(\) \{\s*ui \{ it\.openSosChannelSettings\(\) \}/);
+  assert.match(kt("KestrelBridge.kt"), /fun openSosChannelSettings\(\) \{\s*ui \{ it\.openSosChannelSettings\(\) \}/);
   const open = fn(kt("MainActivity.kt"), "openSosChannelSettings");
   assert.match(open, /val channel = Events\.ensureSosChannel\(this\)/, "the channel exists before its page opens");
   assert.match(open, /ACTION_CHANNEL_NOTIFICATION_SETTINGS[\s\S]*EXTRA_CHANNEL_ID, channel/);

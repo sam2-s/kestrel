@@ -44,7 +44,7 @@ function check(name, cond, detail = "") {
 
 // What the Android WebView plants, plus a getUserMedia wrapper that keeps
 // every stream handed out so the harness can see the tracks end.
-const BRIDGE_STUB = `window.StarlingNative = {
+const BRIDGE_STUB = `window.KestrelNative = {
   platform: () => "android",
   version: () => "e2e",
   torSupported: () => false,
@@ -54,7 +54,7 @@ const BRIDGE_STUB = `window.StarlingNative = {
   hasCameraPermission: () => false,
   requestCamera: (token) => {
     window.__cameraAsked = (window.__cameraAsked || 0) + 1;
-    setTimeout(() => window.__starlingCamera(token, !window.__denyCamera), 50);
+    setTimeout(() => window.__kestrelCamera(token, !window.__denyCamera), 50);
   },
   openAppSettings: () => { window.__settingsOpened = true; },
 };`;
@@ -169,7 +169,7 @@ async function boot(c, { wrapper }) {
   await c.send("Page.addScriptToEvaluateOnNewDocument", { source: STREAM_SPY });
   await c.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await c.send("Page.navigate", { url: BASE + "/" });
-  await waitFor(() => c.evalJs("!!window.__starlingApi && !!window.__starlingInternals"), "app booted");
+  await waitFor(() => c.evalJs("!!window.__kestrelApi && !!window.__kestrelInternals"), "app booted");
 }
 
 async function createCircle(c) {
@@ -228,7 +228,7 @@ async function main() {
 
   const server = spawn("node", [path.join(ROOT, "test", "serve_local.mjs"), String(HTTP_PORT)], {
     cwd: ROOT,
-    env: { ...process.env, STARLING_TEST: "1", STARLING_WRAPPER_HEADERS: "1", RATE_POST_MIN: "100000", RATE_GET_MIN: "100000" },
+    env: { ...process.env, KESTREL_TEST: "1", KESTREL_WRAPPER_HEADERS: "1", RATE_POST_MIN: "100000", RATE_GET_MIN: "100000" },
     stdio: "ignore",
   });
   const chromium = startChromium(CDP_PORT, profile, y4m);
@@ -251,7 +251,7 @@ async function main() {
     await boot(app, { wrapper: true });
     const inviteLink = await createCircle(app);
     check("Ana's invite link was on the invite sheet", /#j=/.test(inviteLink || ""), inviteLink);
-    const pinnedBo = await app.evalJs(`window.__starlingInternals.addPinned(${JSON.stringify({
+    const pinnedBo = await app.evalJs(`window.__kestrelInternals.addPinned(${JSON.stringify({
       memberId: bo.memberId,
       alg: bo.alg,
       pk: b64uEncode(bo.pk),
@@ -291,7 +291,7 @@ async function main() {
           streams: window.__streams.length,
           tracks: s ? s.getTracks().map((t) => t.kind + ":" + t.readyState + ":" + t.label) : null,
           video: v ? { src: !!v.srcObject, ready: v.readyState, w: v.videoWidth, paused: v.paused, err: v.error && v.error.message } : null,
-          errors: window.__starlingErrors || [],
+          errors: window.__kestrelErrors || [],
         };
       })()`);
       console.log("       why:", JSON.stringify(why), "csp:", JSON.stringify(cspComplaints(app)));
@@ -314,7 +314,7 @@ async function main() {
     check("the mark lands on Bo's row", (await text(app, `${boRow} .verify-pill`)) === "Verified");
     const verdictGone = await waitFor(() => app.evalJs(`!document.querySelector('[data-testid="scan-result"]')`), "verdict gone", 5000).catch(() => false);
     check("the verdict closed after marking", verdictGone === true);
-    check("no page errors", ((await app.evalJs("window.__starlingErrors || []")) || []).length === 0, JSON.stringify(await app.evalJs("window.__starlingErrors || []")));
+    check("no page errors", ((await app.evalJs("window.__kestrelErrors || []")) || []).length === 0, JSON.stringify(await app.evalJs("window.__kestrelErrors || []")));
 
     // ------------------------------------------------- camera turned down
     await app.evalJs("window.__denyCamera = true");
@@ -390,7 +390,7 @@ async function main() {
     check("the scan sheet is gone once the invite read", scanGone === true);
     check("the camera ended once the invite read", await joiner.evalJs(`window.__streams.length === 1 && window.__streams[0].getTracks().every((t) => t.readyState === "ended")`));
     check("the join sheet is the request for this circle", /You have an invite to a circle/.test((await text(joiner, '[data-testid="join-sheet"]')) || ""));
-    check("no page errors on the fresh phone", ((await joiner.evalJs("window.__starlingErrors || []")) || []).length === 0, JSON.stringify(await joiner.evalJs("window.__starlingErrors || []")));
+    check("no page errors on the fresh phone", ((await joiner.evalJs("window.__kestrelErrors || []")) || []).length === 0, JSON.stringify(await joiner.evalJs("window.__kestrelErrors || []")));
     joiner.close();
   } finally {
     chromium.kill();

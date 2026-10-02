@@ -13,5 +13,5 @@ test("the version Settings shows matches the build that ships it", () => {
 });
 
 test("Settings reads the version instead of spelling one out", () => {
-  assert.doesNotMatch(read("app/js/ui.js"), /"Starling \d+\.\d+/);
+  assert.doesNotMatch(read("app/js/ui.js"), /"Kestrel \d+\.\d+/);
 });

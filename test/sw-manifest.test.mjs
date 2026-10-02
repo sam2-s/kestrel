@@ -20,11 +20,11 @@ const manifestPath = path.join(APP, "manifest.webmanifest");
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 
 test("manifest has the required fields", () => {
-  assert.equal(manifest.name, "Starling");
-  assert.equal(manifest.short_name, "Starling");
+  assert.equal(manifest.name, "Kestrel");
+  assert.equal(manifest.short_name, "Kestrel");
   assert.equal(
     manifest.description,
-    "Starling's landing page and live demo. Location sharing itself lives in the Starling Android app."
+    "Kestrel's landing page and live demo. Location sharing itself lives in the Kestrel Android app."
   );
   assert.equal(manifest.start_url, "/");
   assert.equal(manifest.scope, "/");
@@ -54,7 +54,7 @@ test("manifest icon set covers 192, 512, maskable 512 and the svg", () => {
   assert.equal(maskable.sizes, "512x512");
   assert.equal(maskable.type, "image/png");
   assert.equal(maskable.purpose, "maskable");
-  const svg = bySrc.get("/icons/starling.svg");
+  const svg = bySrc.get("/icons/kestrel.svg");
   assert.ok(svg, "svg icon listed");
   assert.equal(svg.sizes, "any");
   assert.equal(svg.type, "image/svg+xml");
@@ -98,7 +98,7 @@ const PRECACHE = [
   "/js/qrscan.js",
   "/vendor/leaflet/leaflet.js",
   "/vendor/leaflet/leaflet.css",
-  "/icons/starling.svg",
+  "/icons/kestrel.svg",
   "/icons/favicon.svg",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
@@ -116,7 +116,7 @@ const MUST_EXIST = new Set([
   "/js/qrscan.js",
   "/vendor/leaflet/leaflet.js",
   "/vendor/leaflet/leaflet.css",
-  "/icons/starling.svg",
+  "/icons/kestrel.svg",
   "/icons/favicon.svg",
   "/icons/icon-192.png",
   "/icons/icon-512.png",

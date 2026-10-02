@@ -30,7 +30,7 @@ const { GEN_SLOT, packGenMeta, writeRecordAtRest } = await import("../app/js/cir
 
 test.after(async () => {
   if (state.sharing) await internals.setSharing(false);
-  delete globalThis.StarlingNative;
+  delete globalThis.KestrelNative;
   harness.stopTimers();
 });
 
@@ -47,7 +47,7 @@ const NATIVE = {
 
 async function inCircle() {
   if (state.sharing) await internals.setSharing(false);
-  globalThis.StarlingNative = { ...NATIVE };
+  globalThis.KestrelNative = { ...NATIVE };
   internals.resetShareResumeGuard();
   state.demo = false;
   state.locked = false;
@@ -203,7 +203,7 @@ test("a member is overdue only after due plus the grace", () => {
 test("an overdue member fires one urgent notification and one card, and a check-in clears both", async () => {
   await inCircle();
   const calls = [];
-  globalThis.StarlingNative = {
+  globalThis.KestrelNative = {
     ...NATIVE,
     windowShown: () => false,
     notify: (...a) => calls.push(["notify", ...a]),
@@ -243,7 +243,7 @@ test("an overdue member fires one urgent notification and one card, and a check-
     assert.equal(card().length, 0, "and the card goes with it");
   } finally {
     Date.now = realNow;
-    globalThis.StarlingNative = { ...NATIVE };
+    globalThis.KestrelNative = { ...NATIVE };
   }
 });
 
@@ -271,7 +271,7 @@ test("a phone still posting after its deadline is overdue on every receiver unti
   }
 
   const calls = [];
-  globalThis.StarlingNative = {
+  globalThis.KestrelNative = {
     ...NATIVE,
     windowShown: () => false,
     notify: (...a) => calls.push(["notify", ...a]),
@@ -302,7 +302,7 @@ test("a phone still posting after its deadline is overdue on every receiver unti
     assert.equal(card().length, 0);
   } finally {
     Date.now = realNow;
-    globalThis.StarlingNative = { ...NATIVE };
+    globalThis.KestrelNative = { ...NATIVE };
   }
 });
 

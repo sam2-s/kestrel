@@ -1,5 +1,5 @@
 // The wrapper's Keystore biometric wrap, driven through a fake bridge. The
-// fake mirrors the Kotlin side: async completion through __starlingBio, URL
+// fake mirrors the Kotlin side: async completion through __kestrelBio, URL
 // safe unpadded base64 payloads, null on a failed or dismissed prompt.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -17,26 +17,26 @@ function makeBridge({ failWrap = false, failUnwrap = false } = {}) {
     bioSupported: () => true,
     bioWrap(vaultB64, token) {
       queueMicrotask(async () => {
-        if (failWrap) return globalThis.__starlingBio(token, null);
+        if (failWrap) return globalThis.__kestrelBio(token, null);
         const nonce = crypto.getRandomValues(new Uint8Array(12));
         const ct = new Uint8Array(
           await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, await gcmKey(), b64uDecode(vaultB64)),
         );
-        globalThis.__starlingBio(token, JSON.stringify({ nonce: b64uEncode(nonce), ct: b64uEncode(ct) }));
+        globalThis.__kestrelBio(token, JSON.stringify({ nonce: b64uEncode(nonce), ct: b64uEncode(ct) }));
       });
     },
     bioUnwrap(nonceB64, ctB64, token) {
       queueMicrotask(async () => {
-        if (failUnwrap) return globalThis.__starlingBio(token, null);
+        if (failUnwrap) return globalThis.__kestrelBio(token, null);
         try {
           const pt = await crypto.subtle.decrypt(
             { name: "AES-GCM", iv: b64uDecode(nonceB64) },
             await gcmKey(),
             b64uDecode(ctB64),
           );
-          globalThis.__starlingBio(token, b64uEncode(new Uint8Array(pt)));
+          globalThis.__kestrelBio(token, b64uEncode(new Uint8Array(pt)));
         } catch {
-          globalThis.__starlingBio(token, null);
+          globalThis.__kestrelBio(token, null);
         }
       });
     },
@@ -44,11 +44,11 @@ function makeBridge({ failWrap = false, failUnwrap = false } = {}) {
 }
 
 async function withBridge(bridge, fn) {
-  globalThis.StarlingNative = bridge;
+  globalThis.KestrelNative = bridge;
   try {
     return await fn();
   } finally {
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
   }
 }
 

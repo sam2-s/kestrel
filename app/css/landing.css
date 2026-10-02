@@ -1,4 +1,4 @@
-/* Starling landing page (the public #screen-onboarding surface). Loads after
+/* Kestrel landing page (the public #screen-onboarding surface). Loads after
    tokens.css and app.css and only ever adds to or overrides the "ob-*" and
    "land-*" rules there for this one screen; nothing here reaches into the
    map, lock, or old-web screens. New landing-only elements use the "lnd-"

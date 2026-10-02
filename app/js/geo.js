@@ -9,7 +9,7 @@ import { native } from "./env.js";
 
 function startNativeWatch(n, onFix, onError, { onSignal, afterEach } = {}) {
   // afterEach runs even when handling throws: a missed answer reads as a frozen page.
-  globalThis.__starlingFix = (json) => {
+  globalThis.__kestrelFix = (json) => {
     try {
       handle(json);
     } finally {
@@ -52,13 +52,13 @@ function startNativeWatch(n, onFix, onError, { onSignal, afterEach } = {}) {
   try {
     n.startLocation();
   } catch {
-    delete globalThis.__starlingFix;
+    delete globalThis.__kestrelFix;
     // Native: nothing retries, so the share stops instead of sitting on "Still trying".
     onError({ code: 2, message: "native location failed", native: true });
     return () => {};
   }
   return () => {
-    delete globalThis.__starlingFix;
+    delete globalThis.__kestrelFix;
     try {
       n.stopLocation();
     } catch {

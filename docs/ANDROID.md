@@ -1,6 +1,11 @@
 # Android app
 
 A hand-written Kotlin WebView wrapper around the same `app/` code that runs
+This document was written for upstream Starling and is kept for this fork;
+where it describes store listings or distribution that predate the rename,
+read it as upstream's history. This fork ships signed APKs from its own
+releases page and is not listed anywhere.
+
 at starlingmap.app. Capacitor, Cordova, Trusted Web Activity, Google Play
 Services: none of it is in here. The web app and the Android app share one
 codebase in `app/`; the wrapper adds native capability where the web
@@ -37,10 +42,8 @@ It runs the same `npm ci` / sync-vendor / `assembleRelease` steps, then
 signs the resulting unsigned APK and AAB with the local upload keystore
 using `apksigner`, and finally:
 
-- uploads the signed AAB to Google Play (Play App Signing re-signs it for
-  distribution; see `docs/play-listing.md` for the signing key facts), and
 - attaches the signed APK to a GitHub release, so anyone can download and
-  verify a Starling build without going through either store.
+  verify a Kestrel build without going through any store.
 
 Signing is deliberately kept out of Gradle and out of CI. The keystore
 lives at `~/keys/starling-upload.jks` outside the repo, and its password is
@@ -73,7 +76,7 @@ unsigned APK against Cole's signed one after stripping the signature block
 (`apksigner` can extract the pre-signature APK, or use
 `unzip -l`/content hash comparison on everything outside `META-INF/`). This
 is the same process F-Droid's own reproducible-builds verification runs,
-and it runs it on every Starling version it builds: the APK F-Droid ships
+and it runs it on every Kestrel version it builds: the APK F-Droid ships
 is the developer-signed one, released only because F-Droid's own build
 matched it.
 
@@ -82,7 +85,7 @@ matched it.
 The app registers a PanicKit responder (`info.guardianproject.panic`).
 Pairing with a trigger app like Ripple happens through the visible
 `ACTION_CONNECT` flow, the same as connecting any other panic-response app;
-Starling shows what it will do and asks nothing else. Once connected,
+Kestrel shows what it will do and asks nothing else. Once connected,
 receiving `ACTION_TRIGGER` from that same paired app wipes immediately, with
 no confirmation dialog, because the entire point of a panic trigger is that
 it has to work without a second decision under pressure. The wipe stops a
@@ -99,7 +102,7 @@ or spoofed sender is ignored.
 Two independent paths, both supported:
 
 - **Per-app VPN mode.** Orbot's per-app proxying works with zero code on
-  Starling's side. Turn it on for Starling in Orbot and its traffic routes
+  Kestrel's side. Turn it on for Kestrel in Orbot and its traffic routes
   through Tor like any other app's.
 - **In-app SOCKS toggle.** Settings has a proxy toggle that routes requests
   through Orbot's SOCKS port using `androidx.webkit`'s
@@ -138,7 +141,7 @@ has none of these caveats, which is why both paths are supported.
 Both the web app and the Android wrapper have a relay address setting.
 Default is `https://starlingmap.app`. Anyone running their own relay
 (`relay/` in this repo, deployed with `relay/deploy.sh`) can point their
-client at it instead. This is the mechanism that keeps Starling out of
+client at it instead. This is the mechanism that keeps Kestrel out of
 F-Droid's "tethered to a specific server" anti-feature category: using our
 relay is a default, not a requirement.
 
@@ -178,7 +181,7 @@ first-class target rather than an afterthought:
 - The WebView requirement (137 or newer, see below) is met by GrapheneOS's
   own Vanadium, which tracks current Chromium.
 - Install paths that do not touch Google: F-Droid
-  (<https://f-droid.org/packages/app.starlingmap/>, the same developer-signed
+  (<https://f-droid.org/packages/app.kestrel.map/>, the same developer-signed
   APK after its reproducible-build check), or add it to Tern
   (<https://tern.munzzyy.dev>), which follows the GitHub releases
   page; every release carries a stable `starling.apk` asset name for that.
@@ -249,7 +252,7 @@ or 12 h, and Never is the default. Turning sharing off yourself sets an alarm
 for that long. So do Stop on the notification, a timed share that runs out
 and a circle switch. A stop that came from Android or the app lock sets
 nothing, because that share comes back by itself. If no share is running when
-the alarm goes off, the events channel shows "Sharing is off. Open Starling
+the alarm goes off, the events channel shows "Sharing is off. Open Kestrel
 to share again." Nothing in it names a circle or a person. Starting a share
 or a panic wipe cancels the alarm and takes down a reminder that is already
 showing.
@@ -288,7 +291,7 @@ over; nothing is drawn, because the real window is still hidden. It happens
 when the page's own `freeze` event says it was just frozen, and as a fallback
 when the page stops answering: every push is answered from a task of the
 page's own (a `MessageChannel` message), which only runs if the page is really
-running. The page asks `StarlingNative.windowShown()` instead of trusting
+running. The page asks `KestrelNative.windowShown()` instead of trusting
 `document.visibilityState` wherever "visible" has to mean a person is looking
 (notifications, the autolock, the poll pace), since for that second it reads
 "visible".
@@ -336,7 +339,7 @@ second.
   instead of failing, since Android refuses to start a location service from
   the background.
 - Back, during a share, leaves the app the way Home does. Android finishes the
-  activity on Back unless it was opened from the home screen, and a Starling
+  activity on Back unless it was opened from the home screen, and a Kestrel
   opened from its own notification used to close, taking the share with it.
 
 ### The battery exemption
@@ -346,7 +349,7 @@ wake lock limits, and the emulator measurements showed no difference with or
 without the exemption. Phones add their own battery management on top, though,
 and the open source trackers people compare this to (Traccar, GPSLogger,
 OwnTracks) all ask for it, so the app does too: once, when a share starts on a
-phone that is optimizing Starling, with its own explanation before the system
+phone that is optimizing Kestrel, with its own explanation before the system
 dialog, and "Not now" is final. Settings shows the current state under
 Sharing, with the one button that changes it. "Restricted" cannot be fixed by
 the dialog, so both the card and Settings send the person to the app's own

@@ -243,7 +243,7 @@ def main():
         for br in (a, bb):
             errs = br.errors()
             noisy = [e for e in (errs["__errs"] or []) if "NetworkError" not in e]
-            check(f"{br.name} console clean", not noisy and not errs["__starlingErrors"],
+            check(f"{br.name} console clean", not noisy and not errs["__kestrelErrors"],
                   repr(errs))
     finally:
         for br in (a, bb):

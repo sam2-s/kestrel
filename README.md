@@ -1,18 +1,23 @@
-# starling
+# Kestrel
 
 Private location sharing for friends and family. End to end encrypted, no
 accounts, no phone numbers, and a relay that stores nothing it could ever read.
 
-[![CI](https://github.com/munzzyy/starling/actions/workflows/ci.yml/badge.svg)](https://github.com/munzzyy/starling/actions/workflows/ci.yml)
+Kestrel is a fork of [Starling](https://github.com/munzzyy/starling) by
+Munzzyy, renamed and shipped as its own Android app (`app.kestrel.map`). The
+protocol, the threat model and the audits are upstream's and carry over
+unchanged; what this fork adds is its own name, its own signing identity, and
+its own [releases page](https://github.com/sam2-s/kestrel/releases). The
+Rust native implementation of the same protocol lives under `rust/` and is
+tested against the same committed vectors.
 
-[<img src="https://f-droid.org/badge/get-it-on.png" alt="Get it on F-Droid" height="80">](https://f-droid.org/packages/app.starlingmap/)
-[<img src="https://tern.munzzyy.dev/badge.png" alt="Get it with Tern" height="80">](https://tern.munzzyy.dev/add/?url=https%3A%2F%2Fgithub.com%2Fmunzzyy%2Fstarling)
+[![CI](https://github.com/sam2-s/kestrel/actions/workflows/ci.yml/badge.svg)](https://github.com/sam2-s/kestrel/actions/workflows/ci.yml)
 
-**Live:** [starlingmap.app](https://starlingmap.app) ·
-grab the Android app there, from F-Droid, or from the
-[releases page](https://github.com/munzzyy/starling/releases).
+**Relay:** out of the box the app talks to [starlingmap.app](https://starlingmap.app),
+upstream's public relay. Settings has a relay field for one you run yourself;
+see [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md).
 
-Life360 works by shipping everyone's location to a company. Starling keeps the
+Life360 works by shipping everyone's location to a company. Kestrel keeps the
 Life360 features people actually want (live map of your people, SOS, check-ins,
 battery, invite links) and drops the surveillance: positions are encrypted on
 your device with a key the server never sees, and the relay holds at most 24
@@ -79,7 +84,7 @@ speak v2 yet.
   readable secret in memory or on disk. An optional duress passcode, typed on
   the lock screen, runs the full panic wipe and comes back up as a fresh
   install.
-- Places live only on your phone. Name a spot like Home or School and Starling
+- Places live only on your phone. Name a spot like Home or School and Kestrel
   says when someone in the circle arrives or leaves; detection runs on-device
   against positions that already arrive, so the relay never learns a place
   exists. SOS, arrival, and low-battery alerts reach the Android app as system
@@ -259,8 +264,7 @@ Being clear about the edges is part of the point.
   [docs/WEB-INTEGRITY.md](docs/WEB-INTEGRITY.md) for exactly what that does
   and does not buy. The structural fix is that circles only exist in the
   apps, which bundle their code and never load any from the network: the
-  Android APK, and the iOS wrapper in `ios/` (build-from-source today, see
-  [docs/IOS.md](docs/IOS.md)). The hosted site still refuses to open circles
+  Android APK. The hosted site still refuses to open circles
   in any browser tab, on every platform, for the same reason.
 - **No independent security review.** The design is documented before the
   code, 500-plus unit tests replay committed test vectors, and two rounds of
@@ -270,40 +274,30 @@ Being clear about the edges is part of the point.
 
 ## Android
 
-A native Android app is on
-[F-Droid](https://f-droid.org/packages/app.starlingmap/), ships with every
-[release](https://github.com/munzzyy/starling/releases), and downloads straight
-from [starlingmap.app](https://starlingmap.app). F-Droid builds Starling
-from source, checks that its build matches the published APK, and then
-ships that same developer-signed APK, so all three routes carry one
-signature and you can move between them without reinstalling. F-Droid can
-trail a new release by a few days. Google Play is in progress and not live.
-It runs the same `app/` code
-inside a hand-written Kotlin WebView, and adds what the web platform cannot
-give it on its own: background sharing through a foreground service (with a
-persistent notification the whole time, so it is never silent about what it
-is doing), fingerprint or face unlock through the Android Keystore in place
-of WebAuthn PRF, a PanicKit responder for panic-button apps like Ripple, and
-Orbot support. See [docs/ANDROID.md](docs/ANDROID.md) for building it,
-[docs/play-listing.md](docs/play-listing.md) for the Play Store listing, and
-[docs/fdroid/](docs/fdroid) for the F-Droid metadata.
+The Android app runs the same `app/` code inside a hand-written Kotlin
+WebView and adds what the web platform cannot give it on its own: background
+sharing through a foreground service (with a persistent notification the
+whole time, so it is never silent about what it is doing), fingerprint or
+face unlock through the Android Keystore in place of WebAuthn PRF, a
+PanicKit responder for panic-button apps like Ripple, and Orbot support. See
+[docs/ANDROID.md](docs/ANDROID.md) for building it.
 
-A signed APK ships with every [release](https://github.com/munzzyy/starling/releases),
-with a stable `starling.apk` name that [Tern](https://tern.munzzyy.dev) can track. The app has no
-Google services dependency at all (plain `LocationManager`, no Firebase, no
-push), so it runs as-is on GrapheneOS and other de-googled Android builds;
-testing happens on the no-GMS AOSP emulator image for exactly that
-reason.
+A signed APK ships with every [release](https://github.com/sam2-s/kestrel/releases)
+as `kestrel.apk`, signed with this repository's own key (`android/testkey.jks`
+for test builds; release signing is yours to supply). The app has no Google
+services dependency at all (plain `LocationManager`, no Firebase, no push),
+so it runs as-is on GrapheneOS and other de-googled Android builds; testing
+happens on the no-GMS AOSP emulator image for exactly that reason.
 
 Android 9 works too, with two catches. Google's last security fixes for
 Android 9 came out in January 2022, and Android 9 has no "only while using
 the app" choice for location, so the location permission there covers all
-the time (Starling still only reads your location while you're using it or
-sharing). Starling says both once, the first time it opens there. It also
+the time (Kestrel still only reads your location while you're using it or
+sharing). Kestrel says both once, the first time it opens there. It also
 needs Android System WebView 137 or newer, because older versions can't check
 the Ed25519 signatures newer phones make, and people in your circle would
 quietly stop showing up. A phone that gets updates through Google Play should
-already have it; with an older WebView, Starling explains how to update it
+already have it; with an older WebView, Kestrel explains how to update it
 instead of opening.
 
 ## Privacy policy
@@ -333,7 +327,6 @@ a native speaker, a store account, or a design decision.
   More languages are welcome: `node tools/extract-strings.mjs` prints the
   full catalog for a new one, and a test holds every catalog to full
   coverage. RTL layout polish lands with the first RTL translation.
-- Google Play, still not live.
 - Being visible to more than one circle at once. Precision and cadence are
   per circle now; sharing itself still goes to the active circle only, and
   posting to several means one ratchet, one channel and one outbox each,
@@ -356,11 +349,10 @@ a native speaker, a store account, or a design decision.
 - A real-phone pass over the QR scan. The decoder is proven on rendered and
   distorted codes. The safety number camera path ran on an emulator and the
   invite scan in Chromium with a fake camera. Neither has run on a phone
-  camera pointed at another phone. The iOS wrapper has the camera permission
-  text but no one has run the scan on iOS.
+  camera pointed at another phone.
 - A real-phone pass over the alerts that have to reach a phone in a pocket.
   A missed check-in and an SOS that went quiet use the same urgent
-  notification as an SOS, and they only fire while Starling can listen in
+  notification as an SOS, and they only fire while Kestrel can listen in
   the background, which Samsung and Pixel builds police differently. Four
   newer Android behaviors have only run on the stock emulator so far. An
   SOS rings through Do Not Disturb as an alarm. The sharing notification
@@ -368,15 +360,10 @@ a native speaker, a store account, or a design decision.
   shows up when it should. The people testing #6 on those phones are the
   right check.
 
-There is an iOS app now: a WKWebView wrapper around the same bundled app,
-in `ios/`, that holds a real circle. It is build-from-source only today: a
-Mac with Xcode, and a free Apple ID re-signs every 7 days, and background
-sharing does not exist on it, because iOS offers no equivalent of the
-Android foreground service. [docs/IOS.md](docs/IOS.md) carries the full
-capability table and the build steps; TestFlight distribution waits on a
-paid developer account. What has not changed: circles still do not belong
-in a browser tab on any platform, and the hosted site still refuses to
-open them.
+This fork is Android only. Upstream also carries an iOS wrapper around the
+same bundled app; it stays in upstream's repository and is not part of this
+tree. What has not changed: circles still do not belong in a browser tab on
+any platform, and the hosted site still refuses to open them.
 
 ## Thanks
 
@@ -388,20 +375,17 @@ open them.
 
 ## Questions
 
-Ask in [Discussions](https://github.com/munzzyy/starling/discussions/categories/q-a).
-Bugs and feature requests go in [issues](https://github.com/munzzyy/starling/issues),
-and security problems go by email, as the
-[security policy](https://github.com/munzzyy/starling/security/policy) explains.
+Bugs and feature requests go in [issues](https://github.com/sam2-s/kestrel/issues),
+and security problems follow the [security policy](SECURITY.md). Upstream
+discussions still live at
+[Discussions](https://github.com/munzzyy/starling/discussions/categories/q-a)
+and are a good archive to search first.
 
 ## Support
 
-Starling is free and stays free. If you want to help keep it going, you can
-sponsor on [GitHub Sponsors](https://github.com/sponsors/munzzyy) or send
-Monero to:
-
-```
-8BApLkfsBS39oNXz4L1qCmZ7f5zKVRr1qLJgrHddRZb4JRcnjDkcKdk7wW7uThCeV9CuLn8o7gAn8d6vFeWNiyeXSmrRUSq
-```
+Upstream is where support for Starling itself goes:
+[GitHub Sponsors](https://github.com/sponsors/munzzyy). This fork asks for
+nothing.
 
 ## License
 

@@ -131,7 +131,7 @@ test("no user-visible literal bypasses the translator", () => {
   const files = ["app/js/main.js", "app/js/ui.js", "app/js/helpview.js"];
   const allow = new Set([
     // product name + version, language-invariant
-    "Starling ${VERSION}",
+    "Kestrel ${VERSION}",
   ]);
   const hits = [];
   for (const f of files) {

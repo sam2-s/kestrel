@@ -224,7 +224,7 @@ export function installDom({ hostname = "127.0.0.1" } = {}) {
 export async function loadApp(harness) {
   const mod = await import("../app/js/main.js");
   await settle();
-  return { mod, internals: globalThis.window.__starlingInternals, api: globalThis.window.__starlingApi, harness };
+  return { mod, internals: globalThis.window.__kestrelInternals, api: globalThis.window.__kestrelApi, harness };
 }
 
 export const settle = (ms = 30) => new Promise((r) => setTimeout(r, ms));

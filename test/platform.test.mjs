@@ -39,7 +39,7 @@ function cleanupGlobals() {
     writable: true,
   });
   delete globalThis.matchMedia;
-  delete globalThis.StarlingNative;
+  delete globalThis.KestrelNative;
 }
 
 async function fresh() {
@@ -90,7 +90,7 @@ test("canShareInBackground: only the Android wrapper, never a bare web engine", 
   freshGlobals();
   const { canShareInBackground } = await fresh();
   assert.equal(canShareInBackground(), false);
-  globalThis.StarlingNative = {};
+  globalThis.KestrelNative = {};
   assert.equal(canShareInBackground(), true);
   cleanupGlobals();
 });

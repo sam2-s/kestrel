@@ -31,7 +31,7 @@ const bridge = { calls: [], pulses: [], shown: false };
 async function sharing() {
   bridge.calls.length = 0;
   bridge.pulses.length = 0;
-  globalThis.StarlingNative = {
+  globalThis.KestrelNative = {
     startLocation: () => bridge.calls.push("startLocation"),
     stopLocation: () => bridge.calls.push("stopLocation"),
     clearStopRecord: () => {},
@@ -57,7 +57,7 @@ async function sharing() {
   internals.setupNet();
   await internals.setSharing(true);
   assert.equal(state.sharing, true);
-  assert.equal(typeof globalThis.__starlingFix, "function");
+  assert.equal(typeof globalThis.__kestrelFix, "function");
 }
 
 // Location POSTs, each held open until the check lets it answer.
@@ -97,13 +97,13 @@ test("a burst of fixes behind a slow post sends one more post, not the whole bac
   const realNow = Date.now;
   const t0 = realNow();
   try {
-    globalThis.__starlingFix(fix());
+    globalThis.__kestrelFix(fix());
     await settle();
     assert.equal(held.posts.length, 1, "the first fix posts");
     // Five seconds apart, as a frozen page is handed them.
     for (let i = 1; i <= 5; i++) {
       Date.now = () => t0 + i * 5000;
-      globalThis.__starlingFix(fix());
+      globalThis.__kestrelFix(fix());
       await settle(5);
     }
     assert.equal(held.posts.length, 1, "nothing queues up behind a post in flight");
@@ -125,7 +125,7 @@ test("every push is answered, with the posts still in flight, so the phone can s
   const held = holdPosts();
   try {
     bridge.pulses.length = 0;
-    globalThis.__starlingFix(fix());
+    globalThis.__kestrelFix(fix());
     await settle();
     assert.ok(bridge.pulses.includes(1), `the push is answered while its post is out: ${bridge.pulses}`);
     held.posts[0]();
@@ -133,7 +133,7 @@ test("every push is answered, with the posts still in flight, so the phone can s
     assert.equal(bridge.pulses.at(-1), 0, "and again when it settles, with nothing left in flight");
 
     bridge.pulses.length = 0;
-    globalThis.__starlingFix(JSON.stringify({ tick: true }));
+    globalThis.__kestrelFix(JSON.stringify({ tick: true }));
     await settle();
     assert.ok(bridge.pulses.length >= 1, "a tick is answered too");
     held.posts.at(-1)?.();
@@ -164,12 +164,12 @@ test("a clock refusal whose check never answers does not hold up the posts after
     return realFetch(url, opts);
   };
   try {
-    globalThis.__starlingFix(fix());
+    globalThis.__kestrelFix(fix());
     await settle();
     assert.equal(posts, 1);
     assert.equal(checks, 1, "the refusal set off a clock check, with a deadline of its own");
     Date.now = () => t0 + 5000;
-    globalThis.__starlingFix(fix());
+    globalThis.__kestrelFix(fix());
     await settle();
     assert.equal(posts, 2, "the next fix posts while the check still hangs");
     assert.equal(internals.sendStatus().busy, 0);
@@ -183,7 +183,7 @@ test("a minute with no fix resends the last position", async () => {
   await sharing();
   const held = holdPosts();
   try {
-    globalThis.__starlingFix(fix());
+    globalThis.__kestrelFix(fix());
     await settle();
     held.posts[0]();
     await settle();
@@ -192,7 +192,7 @@ test("a minute with no fix resends the last position", async () => {
     const realNow = Date.now;
     Date.now = () => realNow() + 60_000;
     try {
-      globalThis.__starlingFix(JSON.stringify({ tick: true }));
+      globalThis.__kestrelFix(JSON.stringify({ tick: true }));
       await settle();
     } finally {
       Date.now = realNow;
@@ -211,7 +211,7 @@ test("a position that arrives between generations waits for the next sender", as
   try {
     internals.teardownNet();
     assert.equal(internals.hasSender(), false);
-    globalThis.__starlingFix(fix());
+    globalThis.__kestrelFix(fix());
     await settle();
     assert.equal(held.posts.length, 0, "nothing to seal with yet");
     assert.equal(internals.sendStatus().whenReady, true, "but it is remembered");
@@ -229,12 +229,12 @@ test("with location switched off the last position is not resent as live, but an
   await sharing();
   const held = holdPosts();
   try {
-    globalThis.__starlingFix(fix());
+    globalThis.__kestrelFix(fix());
     await settle();
     held.posts[0]();
     await settle();
     const before = held.posts.length;
-    globalThis.__starlingFix(JSON.stringify({ paused: "location-off" }));
+    globalThis.__kestrelFix(JSON.stringify({ paused: "location-off" }));
     await settle();
     assert.equal(internals.sendStatus().locationPaused, "location-off");
     const realNow = Date.now;
@@ -253,7 +253,7 @@ test("with location switched off the last position is not resent as live, but an
     }
     held.posts.at(-1)();
     await settle();
-    globalThis.__starlingFix(JSON.stringify({ paused: "" }));
+    globalThis.__kestrelFix(JSON.stringify({ paused: "" }));
     assert.equal(internals.sendStatus().locationPaused, null, "and back on clears it");
   } finally {
     await held.restore();
@@ -262,7 +262,7 @@ test("with location switched off the last position is not resent as live, but an
 
 test("a share Android ended comes back when the app is opened; one a person ended does not", async () => {
   await sharing();
-  globalThis.__starlingFix(JSON.stringify({ stopped: true, route: "system" }));
+  globalThis.__kestrelFix(JSON.stringify({ stopped: true, route: "system" }));
   await settle();
   assert.equal(state.sharing, false, "the share stops claiming to be live");
   assert.equal(state.stopRecord?.route, "system", "and says why");
@@ -270,13 +270,13 @@ test("a share Android ended comes back when the app is opened; one a person ende
   assert.equal(state.sharing, true);
 
   await sharing();
-  globalThis.__starlingFix(JSON.stringify({ stopped: true, route: "stalled" }));
+  globalThis.__kestrelFix(JSON.stringify({ stopped: true, route: "stalled" }));
   await settle();
   assert.equal(state.sharing, false);
   assert.equal(await internals.resumeShareIfArmed(), true, "a stall is not a decision either");
 
   await sharing();
-  globalThis.__starlingFix(JSON.stringify({ stopped: true }));
+  globalThis.__kestrelFix(JSON.stringify({ stopped: true }));
   await settle();
   assert.equal(state.sharing, false);
   internals.resetShareResumeGuard();
@@ -308,17 +308,17 @@ test("the line under your name stops saying live once the circle stops hearing f
   const held = holdPosts();
   const realNow = Date.now;
   try {
-    globalThis.__starlingFix(fix());
+    globalThis.__kestrelFix(fix());
     await settle();
     held.posts[0]();
     await settle();
     const sub = harness.node("#you-sub");
     Date.now = () => realNow() + 2 * 60_000;
-    globalThis.__starlingFix(JSON.stringify({ lat: 40.78 + 0.0004 * north, lon: -73.97, ts: Date.now(), acc: 5 }));
+    globalThis.__kestrelFix(JSON.stringify({ lat: 40.78 + 0.0004 * north, lon: -73.97, ts: Date.now(), acc: 5 }));
     await settle();
     assert.match(sub.textContent, /^Live · Precise · last sent 2 min ago$/, sub.textContent);
     Date.now = () => realNow() + 5 * 60_000;
-    globalThis.__starlingFix(JSON.stringify({ lat: 40.78 + 0.0004 * north, lon: -73.97, ts: Date.now(), acc: 5 }));
+    globalThis.__kestrelFix(JSON.stringify({ lat: 40.78 + 0.0004 * north, lon: -73.97, ts: Date.now(), acc: 5 }));
     await settle();
     assert.match(sub.textContent, /^Not reaching your circle · last sent 5 min ago$/, sub.textContent);
   } finally {

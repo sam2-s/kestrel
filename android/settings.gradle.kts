@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "starling-android"
+rootProject.name = "kestrel-android"
 include(":app")

@@ -4,15 +4,15 @@ plugins {
 }
 
 android {
-    namespace = "app.starlingmap"
+    namespace = "app.kestrel.map"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "app.starlingmap"
+        applicationId = "app.kestrel.map"
         minSdk = 28
         targetSdk = 36
-        versionCode = 1600
-        versionName = "0.16.0"
+        versionCode = 2
+        versionName = "0.1.0-alpha.1"
     }
 
     buildTypes {

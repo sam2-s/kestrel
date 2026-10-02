@@ -30,7 +30,7 @@ const { buildDataExport } = await import("../app/js/export.js");
 test.after(() => harness.stopTimers());
 
 const kt = (name) =>
-  readFileSync(new URL(`../android/app/src/main/kotlin/app/starlingmap/${name}`, import.meta.url), "utf8");
+  readFileSync(new URL(`../android/app/src/main/kotlin/app/kestrel/map/${name}`, import.meta.url), "utf8");
 
 const URL_WITH_KEY = "https://relay.example.org/owntracks?api_key=s3cret";
 
@@ -40,7 +40,7 @@ let accept = true;
 
 function bridge() {
   sets = [];
-  globalThis.StarlingNative = {
+  globalThis.KestrelNative = {
     startLocation() {},
     stopLocation() {},
     clearStopRecord() {},
@@ -181,7 +181,7 @@ test("what the page can read back is the host, never the address", () => {
   const status = src.slice(src.indexOf("fun status("), src.indexOf("fun set("));
   assert.match(status, /put\("host", host\(ctx\)/);
   assert.doesNotMatch(status, /url\(ctx\)/);
-  const bridgeSrc = kt("StarlingBridge.kt");
+  const bridgeSrc = kt("KestrelBridge.kt");
   assert.match(bridgeSrc, /fun forwardStatus\(\): String = Forward\.status\(app\)/);
   assert.match(bridgeSrc, /val ok = Forward\.set\(app, url\)\s+if \(ok\) LocationService\.refreshNotification\(\)/);
 });
@@ -211,7 +211,7 @@ test("a tracker ID follows the forwarder's rule: up to 64 characters on one line
 test("the tracker ID needs no passcode, and a bad one never reaches the wrapper", async () => {
   bridge();
   const tids = [];
-  globalThis.StarlingNative.setForwardTid = (v) => {
+  globalThis.KestrelNative.setForwardTid = (v) => {
     tids.push(v);
     return true;
   };
@@ -239,6 +239,6 @@ test("the wrapper sends tid only when one is set, and reports it back", () => {
   assert.match(src, /\.put\("tid", tid\(ctx\) \?: JSONObject\.NULL\)/);
   assert.match(src, /if \(s\.length > MAX_TID \|\| s\.any \{ it\.code < 0x20 \|\| it\.code == 0x7f \}\) return null/);
   assert.match(src, /MAX_TID = 64/);
-  assert.match(kt("StarlingBridge.kt"), /fun setForwardTid\(tid: String\?\): Boolean = Forward\.setTid\(app, tid\)/);
+  assert.match(kt("KestrelBridge.kt"), /fun setForwardTid\(tid: String\?\): Boolean = Forward\.setTid\(app, tid\)/);
 });
 

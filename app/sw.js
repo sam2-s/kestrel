@@ -1,6 +1,6 @@
-// Starling service worker. App shell only; location data never touches a cache.
+// Kestrel service worker. App shell only; location data never touches a cache.
 
-const VERSION = "starling-v35";
+const VERSION = "kestrel-v1";
 
 const PRECACHE = [
   "/",
@@ -46,7 +46,7 @@ const PRECACHE = [
   "/js/version.js",
   "/vendor/leaflet/leaflet.js",
   "/vendor/leaflet/leaflet.css",
-  "/icons/starling.svg",
+  "/icons/kestrel.svg",
   "/icons/favicon.svg",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
@@ -61,7 +61,7 @@ self.addEventListener("install", (event) => {
         await cache.addAll(PRECACHE);
       } catch (err) {
         // A missing shell file fails this install; the previous cache stays whole.
-        console.error("starling sw: precache failed, install aborted", err);
+        console.error("kestrel sw: precache failed, install aborted", err);
         throw err;
       }
     })()

@@ -28,13 +28,13 @@ const { generateIdentity, newSeed } = await import("../app/js/crypto.js");
 
 test.after(async () => {
   if (state.sharing) await internals.setSharing(false);
-  delete globalThis.StarlingNative;
+  delete globalThis.KestrelNative;
   harness.stopTimers();
 });
 
 async function sharing() {
   if (state.sharing) await internals.setSharing(false);
-  globalThis.StarlingNative = {
+  globalThis.KestrelNative = {
     startLocation: () => {},
     stopLocation: () => {},
     setShareCadence: () => {},

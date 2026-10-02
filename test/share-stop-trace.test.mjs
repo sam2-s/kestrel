@@ -47,7 +47,7 @@ const stopCard = () => internals.alertItems().find((i) => i.id === "stop-record"
 test("a stop from the notification route survives to the next open, and dismissing it clears the native side", async () => {
   resetForBoot();
   const calls = [];
-  globalThis.StarlingNative = {
+  globalThis.KestrelNative = {
     readStopRecord: () => JSON.stringify({ route: "notif", at: 1000 }),
     clearStopRecord: () => calls.push("clear"),
   };
@@ -66,13 +66,13 @@ test("a stop from the notification route survives to the next open, and dismissi
     assert.deepEqual(calls, ["clear"], "and tells the native side it was acknowledged");
     assert.equal(stopCard(), undefined, "so a second render does not show it again");
   } finally {
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
   }
 });
 
 test("a stop from a task swipe gets its own honest wording, distinct from the notification route", async () => {
   resetForBoot();
-  globalThis.StarlingNative = {
+  globalThis.KestrelNative = {
     readStopRecord: () => JSON.stringify({ route: "swipe", at: 2000 }),
     clearStopRecord: () => {},
   };
@@ -84,36 +84,36 @@ test("a stop from a task swipe gets its own honest wording, distinct from the no
     assert.match(card.text, /closed/i);
     assert.doesNotMatch(card.text, /notification/i, "a swipe did not happen through the notification");
   } finally {
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
   }
 });
 
 test("no native record means no card, and a malformed one fails safe", async () => {
   resetForBoot();
-  globalThis.StarlingNative = { readStopRecord: () => null };
+  globalThis.KestrelNative = { readStopRecord: () => null };
   try {
     await internals.boot();
     await settle();
     assert.equal(stopCard(), undefined);
   } finally {
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
   }
 
   resetForBoot();
-  globalThis.StarlingNative = { readStopRecord: () => "{not json" };
+  globalThis.KestrelNative = { readStopRecord: () => "{not json" };
   try {
     await internals.boot();
     await settle();
     assert.equal(stopCard(), undefined, "a boot must not fail over a native record it cannot parse");
   } finally {
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
   }
 });
 
 test("a panic wipe also tells the native side to drop the stop record", async () => {
   resetForBoot();
   const calls = [];
-  globalThis.StarlingNative = {
+  globalThis.KestrelNative = {
     panicWipe: () => calls.push("panicWipe"),
     clearStopRecord: () => calls.push("clearStopRecord"),
   };
@@ -121,7 +121,7 @@ test("a panic wipe also tells the native side to drop the stop record", async ()
     await internals.panic();
     assert.deepEqual(calls, ["panicWipe", "clearStopRecord"]);
   } finally {
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
   }
 });
 
@@ -135,7 +135,7 @@ test("a native wipe that throws still drops the stop record and still runs the p
     calls.push("deleteDatabase");
     return deleteDatabase.apply(this, args);
   };
-  globalThis.StarlingNative = {
+  globalThis.KestrelNative = {
     panicWipe: () => {
       calls.push("panicWipe");
       throw new Error("A WebView method was called on thread 'JavaBridge'");
@@ -146,7 +146,7 @@ test("a native wipe that throws still drops the stop record and still runs the p
     await internals.panic();
     assert.deepEqual(calls, ["panicWipe", "clearStopRecord", "deleteDatabase", "reload"]);
   } finally {
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
     location.reload = reload;
     indexedDB.deleteDatabase = deleteDatabase;
   }
@@ -155,7 +155,7 @@ test("a native wipe that throws still drops the stop record and still runs the p
 test("a live stop from the notification names itself instead of going silent, and clears the trace it just showed", async () => {
   resetForBoot();
   const calls = [];
-  globalThis.StarlingNative = {
+  globalThis.KestrelNative = {
     startLocation() {},
     stopLocation() {},
     clearStopRecord: () => calls.push("clear"),
@@ -163,14 +163,14 @@ test("a live stop from the notification names itself instead of going silent, an
   try {
     await internals.setSharing(true);
     assert.equal(state.sharing, true);
-    assert.equal(typeof globalThis.__starlingFix, "function", "startWatch armed the native fix sink");
+    assert.equal(typeof globalThis.__kestrelFix, "function", "startWatch armed the native fix sink");
 
     const toasts = harness.node("#toasts");
     toasts.children.length = 0;
 
     // What LocationService's ACTION_STOP branch sends the page while it is
     // still alive to receive it.
-    globalThis.__starlingFix(JSON.stringify({ stopped: true }));
+    globalThis.__kestrelFix(JSON.stringify({ stopped: true }));
     await settle();
 
     assert.equal(state.sharing, false, "the stop is honored, not just logged");
@@ -179,7 +179,7 @@ test("a live stop from the notification names itself instead of going silent, an
     assert.match(last.textContent, /notification/i);
     assert.deepEqual(calls, ["clear"], "the in-session toast already said it, so the next-open card should not repeat it");
   } finally {
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
     if (state.sharing) await internals.stopSharingInternals();
   }
 });
@@ -188,7 +188,7 @@ test("starting a share by hand clears a swipe record, but a notification Stop st
   for (const [route, cleared] of [["swipe", true], ["notif", false]]) {
     resetForBoot();
     const calls = [];
-    globalThis.StarlingNative = {
+    globalThis.KestrelNative = {
       readStopRecord: () => JSON.stringify({ route, at: 3000 }),
       clearStopRecord: () => calls.push("clear"),
     };
@@ -201,14 +201,14 @@ test("starting a share by hand clears a swipe record, but a notification Stop st
       assert.equal(state.stopRecord === null, cleared, `${route} record after a manual start`);
       assert.equal(calls.includes("clear"), cleared);
     } finally {
-      delete globalThis.StarlingNative;
+      delete globalThis.KestrelNative;
     }
   }
 });
 
 test("a share Android ended by killing the page says so, and does not blame a person", async () => {
   resetForBoot();
-  globalThis.StarlingNative = {
+  globalThis.KestrelNative = {
     readStopRecord: () => JSON.stringify({ route: "renderer", at: 4000 }),
     clearStopRecord: () => {},
   };
@@ -220,6 +220,6 @@ test("a share Android ended by killing the page says so, and does not blame a pe
     assert.match(card.text, /Android/);
     assert.doesNotMatch(card.text, /notification|check who has access/i);
   } finally {
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
   }
 });

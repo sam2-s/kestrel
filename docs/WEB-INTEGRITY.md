@@ -68,7 +68,7 @@ diffing starlingmap.app against the published manifest on every page load.
 An ordinary helper who opens a beacon link during someone's actual emergency
 is never going to open a terminal and run `curl | sha256sum` first, and
 expecting them to would be dishonest about what this protects. What it
-protects is the case where a journalist, a researcher, or Starling's own
+protects is the case where a journalist, a researcher, or Kestrel's own
 maintainers periodically check, and where the origin operator therefore has
 to weigh being caught against whatever they'd gain from a targeted swap. That
 is a real deterrent. It is not a technical guarantee, and we are not going to

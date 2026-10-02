@@ -203,7 +203,7 @@ def main():
         b.send_keys('[data-testid="passcode-confirm"]', "246810")
         b.click('[data-testid="passcode-save"]')
         time.sleep(2.0)  # PBKDF2 derive
-        if b.exec("return !!(window.__starlingApi.state.lock || {}).duress"):
+        if b.exec("return !!(window.__kestrelApi.state.lock || {}).duress"):
             raise E2EError("duress equal to the unlock passcode must be refused")
         log("duress equal to the unlock passcode refused")
         b.exec("document.querySelector('[data-testid=\"passcode-input\"]').value='';")
@@ -211,7 +211,7 @@ def main():
         b.send_keys('[data-testid="passcode-input"]', "135790")
         b.send_keys('[data-testid="passcode-confirm"]', "135790")
         b.click('[data-testid="passcode-save"]')
-        wait_for(lambda: b.exec("return !!(window.__starlingApi.state.lock || {}).duress"),
+        wait_for(lambda: b.exec("return !!(window.__kestrelApi.state.lock || {}).duress"),
                  timeout=15, desc="duress set")
         log("duress passcode set")
         escape_all()
@@ -235,7 +235,7 @@ def main():
 
         # Console must be clean throughout.
         errs = b.errors()
-        dirty = [v for v in (errs.get("__starlingErrors") or []) if v]
+        dirty = [v for v in (errs.get("__kestrelErrors") or []) if v]
         if dirty:
             raise E2EError(f"console errors: {dirty}")
         log("console clean")

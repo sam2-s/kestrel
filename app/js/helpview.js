@@ -128,7 +128,7 @@ async function boot() {
   if (!parsed) {
     showPanel(
       "Not a valid help link",
-      "This page only works when opened from a complete Starling help link. Ask the person who sent it to share the link again.",
+      "This page only works when opened from a complete Kestrel help link. Ask the person who sent it to share the link again.",
     );
     return;
   }

@@ -30,7 +30,7 @@ let calls = [];
 
 async function sharing(reminderMs) {
   calls = [];
-  globalThis.StarlingNative = {
+  globalThis.KestrelNative = {
     startLocation: () => calls.push(["start"]),
     stopLocation: () => calls.push(["stop"]),
     clearStopRecord: () => {},
@@ -93,7 +93,7 @@ test("the panic wipe takes back a reminder before it wipes", async () => {
   await sharing(HOUR);
   await internals.setSharing(false);
   calls = [];
-  globalThis.StarlingNative.panicWipe = () => calls.push(["wipe"]);
+  globalThis.KestrelNative.panicWipe = () => calls.push(["wipe"]);
   await internals.panic();
   const at = (name) => calls.findIndex((c) => c[0] === name);
   assert.ok(at("cancel") >= 0, "panic cancels the reminder");
@@ -103,7 +103,7 @@ test("the panic wipe takes back a reminder before it wipes", async () => {
 test("the Kotlin side: an inexact alarm, a private receiver, and silence while a share runs", async () => {
   const { readFileSync } = await import("node:fs");
   const read = (rel) => readFileSync(new URL(`../${rel}`, import.meta.url), "utf8");
-  const kt = (name) => read(`android/app/src/main/kotlin/app/starlingmap/${name}`);
+  const kt = (name) => read(`android/app/src/main/kotlin/app/kestrel/map/${name}`);
   const manifest = read("android/app/src/main/AndroidManifest.xml");
   assert.doesNotMatch(manifest, /EXACT_ALARM/);
   assert.match(manifest, /<receiver\s+android:name="\.ShareReminderReceiver"\s+android:exported="false"\s*\/>/);

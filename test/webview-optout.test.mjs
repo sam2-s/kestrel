@@ -13,7 +13,7 @@ test("the manifest opts the WebView out of Safe Browsing and metrics, inside <ap
 });
 
 test("PageHost turns Safe Browsing off on the WebView it builds", () => {
-  const host = read("android/app/src/main/kotlin/app/starlingmap/PageHost.kt");
+  const host = read("android/app/src/main/kotlin/app/kestrel/map/PageHost.kt");
   const settings = host.slice(host.indexOf("with(view.settings) {"), host.indexOf("view.setRendererPriorityPolicy"));
   assert.match(settings, /\bsafeBrowsingEnabled = false\b/);
 });

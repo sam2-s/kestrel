@@ -46,7 +46,7 @@ async function sharing(share = { precision: null, cadence: null }) {
   if (state.sharing) await internals.setSharing(false);
   calls.length = 0;
   periods.length = 0;
-  globalThis.StarlingNative = {
+  globalThis.KestrelNative = {
     startLocation: () => calls.push("startLocation"),
     stopLocation: () => calls.push("stopLocation"),
     setShareCadence: (s) => calls.push(`setShareCadence:${s}`),
@@ -211,5 +211,5 @@ test("a tick from the service resends only once the cadence has passed", async (
 test.after(async () => {
   if (state.sharing) await internals.setSharing(false);
   globalThis.setInterval = realSetInterval;
-  delete globalThis.StarlingNative;
+  delete globalThis.KestrelNative;
 });

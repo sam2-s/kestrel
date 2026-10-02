@@ -6,7 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const KT = "android/app/src/main/kotlin/app/starlingmap/";
+const KT = "android/app/src/main/kotlin/app/kestrel/map/";
 const KEYS = ["webview_title", "webview_too_old", "webview_missing", "android9_title", "android9_body"];
 
 // Windows checkouts carry CRLF, and these checks match on line ends.

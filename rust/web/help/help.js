@@ -11,7 +11,7 @@
 // the link was ever forwarded to can therefore write a position that opens as
 // cleanly as the real one, including a false location, or a "checked in safe"
 // that ends the session while someone is still in trouble. Trust on first use
-// would not help, because the attacker can be first — they hold the link before
+// would not help, because the attacker can be first: they hold the link before
 // anything has been posted.
 //
 // What stops them is the signature. Every point is signed by a key whose member

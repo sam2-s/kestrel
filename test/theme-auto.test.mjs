@@ -22,7 +22,7 @@ test.after(() => harness.stopTimers());
 test("Auto takes the phone's dark mode from the wrapper and repaints when it says it changed", async () => {
   let dark = false;
   const bars = [];
-  globalThis.StarlingNative = { systemDark: () => dark, setBarsLight: (light) => bars.push(light) };
+  globalThis.KestrelNative = { systemDark: () => dark, setBarsLight: (light) => bars.push(light) };
   try {
     await api.setSetting("theme", "auto");
     await settle();
@@ -30,26 +30,26 @@ test("Auto takes the phone's dark mode from the wrapper and repaints when it say
     assert.equal(bars.at(-1), true, "dark bar icons on a light page");
 
     dark = true;
-    globalThis.__starlingScheme();
+    globalThis.__kestrelScheme();
     assert.equal(document.documentElement.dataset.theme, "dark");
     assert.equal(bars.at(-1), false);
 
     await api.setSetting("theme", "light");
-    globalThis.__starlingScheme();
+    globalThis.__kestrelScheme();
     assert.equal(document.documentElement.dataset.theme, "light", "a chosen theme ignores the phone");
     assert.equal(bars.at(-1), true);
   } finally {
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
   }
 });
 
 test("without the wrapper method Auto still reads prefers-color-scheme", async () => {
-  globalThis.StarlingNative = {};
+  globalThis.KestrelNative = {};
   try {
     await api.setSetting("theme", "auto");
     await settle();
     assert.equal(document.documentElement.dataset.theme, "dark", "the harness's matchMedia does not match light");
   } finally {
-    delete globalThis.StarlingNative;
+    delete globalThis.KestrelNative;
   }
 });
