@@ -1,0 +1,1 @@
+A check-in timer that tells your circle if you miss a deadline, safety numbers as QR codes with an in-app scanner for invite codes too, German, French and Brazilian Portuguese, precision and send timing per circle, an SOS that rings through Do Not Disturb, the passcode stretched with Argon2id, and a sharing notification that comes back if it is swiped away.

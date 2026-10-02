@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ['24', '26']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: QR ground-truth tools (dev-only)
+        run: python -m pip install qrcode numpy pillow
+      - name: zbar, the independent second reader (Linux runners only)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y --no-install-recommends zbar-tools
+      - name: Vendor sync
+        run: npm ci && bash tools/sync-vendor.sh
+        shell: bash
+      - name: Unit tests
+        run: node --test test/*.test.mjs
+
+  clean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: No em/en dashes or AI attribution
+        run: bash tools/check-clean.sh
+
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - name: Vendor sync
+        run: npm ci && bash tools/sync-vendor.sh
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+      - name: Build for the simulator
+        run: |
+          cd ios && xcodebuild -project Starling.xcodeproj -target Starling \
+            -configuration Release -sdk iphonesimulator \
+            CODE_SIGNING_ALLOWED=NO SYMROOT="$PWD/build" build
+      - name: Only the location and camera prompts, no ATS holes
+        run: |
+          plist=ios/build/Release-iphonesimulator/Starling.app/Info.plist
+          out=$(plutil -p "$plist")
+          echo "$out"
+          if echo "$out" | grep -E "UsageDescription" | grep -v "NSLocationWhenInUseUsageDescription" | grep -v "NSCameraUsageDescription"; then
+            echo "an unexpected permission prompt crept into the manifest"; exit 1
+          fi
+          if echo "$out" | grep "NSAppTransportSecurity"; then
+            echo "an ATS exception crept into the manifest"; exit 1
+          fi
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Notification privacy invariants
+        run: bash tools/check-notification-privacy.sh
+      - name: Vendor sync
+        run: npm ci && bash tools/sync-vendor.sh
+      - name: Build release APK (unsigned)
+        run: cd android && ./gradlew --no-daemon assembleRelease lint
+      - name: Assert only the expected permissions
+        run: |
+          AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | tail -1)
+          out=$("$AAPT" dump permissions android/app/build/outputs/apk/release/app-release-unsigned.apk)
+          echo "$out"
+          if echo "$out" | grep -E "uses-permission" \
+            | grep -v "android.permission.INTERNET" \
+            | grep -v "android.permission.ACCESS_FINE_LOCATION" \
+            | grep -v "android.permission.ACCESS_COARSE_LOCATION" \
+            | grep -v "android.permission.FOREGROUND_SERVICE" \
+            | grep -v "android.permission.FOREGROUND_SERVICE_LOCATION" \
+            | grep -v "android.permission.POST_NOTIFICATIONS" \
+            | grep -v "android.permission.WAKE_LOCK" \
+            | grep -v "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" \
+            | grep -v "android.permission.USE_BIOMETRIC" \
+            | grep -v "android.permission.CAMERA" \
+            | grep -v "DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"; then
+            echo "unexpected permission crept into the manifest"; exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: starling-release-unsigned
+          path: android/app/build/outputs/apk/release/app-release-unsigned.apk

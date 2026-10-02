@@ -1,0 +1,1 @@
+While you share, Starling can also send your own position, in OwnTracks format, to a server you run, like Reitti, Dawarich or Home Assistant. Set it under Settings, Sharing. The relay can now run on your own server too, with no Cloudflare account.

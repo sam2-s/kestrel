@@ -1,0 +1,10 @@
+A share now survives the app being closed. Sharing still stops when you swipe
+the app away, because the keys that seal each position go with the process, but
+the app writes down that a share was running and puts it back when you reopen
+it. A share you stopped yourself stays stopped, a timed share that ran out stays
+ended, and a locked phone resumes nothing until you unlock it.
+
+Two members changing the circle's keys at the same moment no longer splits the
+circle across two channels without telling anyone. The side that loses the tie
+rejoins the other. A re-key that removes or admits someone is never reconciled
+this way, so nobody gets added back by their own removal.

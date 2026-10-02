@@ -1,0 +1,19 @@
+/* Privacy policy page. Tokens come from tokens.css; this file exists so the
+   page's CSP can stay 'self'-only with no inline style allowance. */
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 1rem/1.6 var(--font);
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 1.25rem 1.25rem 4rem;
+}
+h1 { font-size: 1.6rem; margin: 1.25rem 0 0.25rem; }
+h2 { font-size: 1.15rem; margin-top: 2rem; }
+p, li { color: var(--ink-2); }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.back { margin: 0; font-size: 0.9rem; }
+.back a { display: inline-block; padding: 4px 0; font-weight: 700; text-decoration: none; }
+.effective { color: var(--ink-3); font-size: 0.9rem; margin-top: 0; }
+code { background: var(--bg-2); padding: 0.1rem 0.35rem; border-radius: 4px; }

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Starling</string>
+    <string name="notif_channel">Compartilhamento de localização</string>
+    <string name="notif_events_channel">Alertas do círculo</string>
+    <string name="notif_sos_channel">Alertas de emergência</string>
+    <string name="notif_sos_text">Abra o Starling agora.</string>
+    <string name="notif_title">Compartilhando com seu círculo</string>
+    <string name="notif_text_forward">Enviando também para %1$s. Toque em Parar para encerrar.</string>
+    <string name="notif_text">Toque em Parar para encerrar.</string>
+    <string name="notif_swiped_title">Compartilhamento parado</string>
+    <string name="notif_swiped_text">O Starling foi fechado. Abra de novo para continuar compartilhando.</string>
+    <string name="notif_location_off">A localização está desligada neste celular. Ligue para continuar compartilhando.</string>
+    <string name="notif_locked_text">Abra o Starling para ver o que aconteceu.</string>
+    <string name="notif_remind_title">O compartilhamento está desligado</string>
+    <string name="notif_remind_text">Abra o Starling para compartilhar de novo.</string>
+    <string name="notif_stop">Parar</string>
+    <string name="bio_wrap_title">Confirme para ativar o desbloqueio biométrico</string>
+    <string name="bio_unwrap_title">Desbloquear o Starling</string>
+    <string name="bio_cancel">Usar senha</string>
+    <string name="panic_connect_title">Botão de pânico</string>
+    <string name="panic_connect_text">Permitir que %1$s acione o apagamento de pânico do Starling? Ao acionar, ele apaga o segredo do círculo, sua identidade e todo rastro do Starling neste aparelho, na hora e sem perguntar. Não dá para desfazer.</string>
+    <string name="panic_allow">Permitir apagamento de pânico</string>
+    <string name="panic_deny">Não permitir</string>
+    <string name="panic_unknown_app">este app</string>
+    <string name="webview_title">Atualize o Android System WebView</string>
+    <string name="webview_too_old">O Starling roda dentro do Android System WebView e precisa da versão %1$d ou mais nova. Este celular tem a versão %2$d.\n\nAtualize o Android System WebView (em alguns celulares ele vem com o Chrome) pela sua loja de apps, ou instale a atualização de sistema mais recente do celular, e abra o Starling de novo.</string>
+    <string name="webview_missing">O Starling roda dentro do Android System WebView, e este celular não tem um que funcione. Ele pode estar desativado nas configurações de apps do celular, ou precisar de uma atualização pela sua loja de apps.</string>
+    <string name="android9_title">Este celular usa Android 9</string>
+    <string name="android9_body">As últimas correções de segurança do Google para o Android 9 saíram em janeiro de 2022. O Starling funciona aqui, mas as falhas do Android encontradas desde então continuam abertas neste celular, e um app ou site malicioso poderia usar uma delas para seguir sua localização.\n\nO Android 9 também não consegue limitar a localização a \"só enquanto o app está em uso\", então a permissão vale o tempo todo. O Starling só lê sua localização enquanto você está usando ou compartilhando.\n\nSe puder, use um celular mais novo.</string>
+</resources>

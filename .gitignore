@@ -1,3 +1,21 @@
+node_modules
+test/screenshots/*.tmp
+*.png.tmp
+.wrangler/
+__pycache__/
+
+# Generated from npm by tools/sync-vendor.sh; never committed.
+app/vendor
+
+# Signed release artifacts, produced by tools/release-android.sh.
+dist/
+app/starling.apk
+.claude/
+
+# The plain-server relay's default SQLite database and its WAL/SHM siblings.
+relay/data/
+
+# ---- Kestrel (the Rust workspace lives under rust/) ----
 rust/target/
 **/*.rs.bk
 *.apk
@@ -6,7 +24,6 @@ local.properties
 .gradle/
 build/
 .cargo/
-relay/data/
 *.db
 *.db-wal
 *.db-shm

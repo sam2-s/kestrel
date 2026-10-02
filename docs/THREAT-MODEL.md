@@ -1,0 +1,648 @@
+# Starling threat model
+
+Written before the code, kept honest after it. Claims here are backed by tests
+where a test can back them (see `test/`), and marked as limits where it
+cannot. This is protocol v2: forward secrecy, post-compromise security, and
+cryptographic member removal, and as of 0.5.0 it is wired end to end, crypto
+core through relay through storage through UI, on web and on Android. Read
+[docs/AUDIT.md](AUDIT.md) for the file:line map of where each property lives
+and for the questions we most want an independent auditor to attack first.
+Nobody has done that audit yet; see "No human security audit" below.
+
+## What changed from v1
+
+- **Forward secrecy**, bounded by the history window. Content keys advance
+  once per 10-minute epoch and the previous key is destroyed on the device
+  that advanced past it. A device can only ever be made to give up the trail
+  still inside its retained window (10 minutes to 24 hours, a user setting),
+  never anything older.
+- **Post-compromise security.** A re-key mixes fresh ECDH entropy into a new
+  generation with its own chain and its own channel. Holding today's keys
+  says nothing about tomorrow's, once someone re-keys.
+- **Member removal is now cryptographic**, not advisory. Removing someone is
+  a re-key that excludes them: they receive no wrap, derive no new seed, and
+  cannot follow the circle to its next channel. A v1 removal only asked
+  everyone else to rotate; it did not, by itself, stop the removed device
+  from reading anything it already held.
+- **Invites are one-time credentials**, not bearer tokens. A v1 invite link
+  carried the circle secret itself, so anyone who ever saw the link held
+  every past and future key it protected. A v2 invite bootstraps a pairwise
+  handshake; the circle's actual key material is handed over only after a
+  human accepts the joiner's safety number, and the invite is burned the
+  moment that happens. The link also carries a 128-bit commitment to the
+  inviter's keypair, and the joiner refuses a welcome from anybody else. That
+  is what makes the direction nobody thinks about safe: without it, whoever
+  else saw the link could answer it first, seal a circle of their own to the
+  joiner, and own the joining device while the app said "You joined".
+- **Beacon links are per-viewer and revocable, with an expiry that is
+  actually enforced.** Each person you send help to gets their own secret and
+  their own derived channel; revoking one stops posting to that channel and
+  sends it a final `bye` without touching the others. Past its expiry the
+  viewer page stops polling on its own, and the beacon stops posting to that
+  viewer's channel, on both ends, independent of each other.
+
+## What the relay can never learn
+
+The relay (and anyone who compromises it, subpoenas it, or dumps its
+database) gets ciphertext and metadata only:
+
+- No positions. Locations are AES-256-GCM encrypted on the device with a key
+  that never leaves member devices, per-epoch and per-sender so no two
+  members and no two epochs ever share a key.
+- No names, avatars, or circle names. All identity travels inside ciphertext.
+  Member slots are ids derived from two public keys (signing and agreement),
+  not from anything a relay chose or assigned.
+- No accounts, phone numbers, emails, or push tokens. There is nothing to
+  link a channel to a person except traffic metadata.
+- No history beyond the TTL. Rows expire at 24 h and there are no backups by
+  design. A full seizure of the relay yields at most one day of ciphertext,
+  and less than that for any epoch a device has already advanced past.
+
+## What the relay does learn, honestly
+
+- **IP addresses and timing.** Each poll and post reveals a source IP and a
+  cadence. On top of an always-on VPN or Tor this drops to the exit's IP.
+  There is no cover traffic between members, no mixnet, no private
+  information retrieval. A "steady cadence" setting exists and posts on a
+  fixed interval whether or not a member has moved, which hides *when* a
+  member moves; it is a real, smaller property, not a substitute for cover
+  traffic, and it does nothing about the fact that the relay still sees a
+  post arrive on that cadence from that IP.
+- **How many members post to a channel.** Channel shape (member slot count,
+  update rhythm) is visible; ciphertext sizes carry nothing, because every
+  message type pads to the same fixed length regardless of what it is.
+- **A correlation signal between an SOS and its circle.** Firing an SOS opens
+  a second channel, on its own key material, from the same device, at the
+  same instant, as the circle's own channel. The keys are unlinkable by
+  construction; the timing is not. A relay operator watching arrival times
+  does not need to break any cryptography to notice that two channels tend to
+  update together from one IP address. This is a real gap, not a theoretical
+  one, and nothing in the design closes it.
+- **That you use Starling at all** (from the origin you talk to).
+
+## Who the relay operator is
+
+The default relay, at starlingmap.app, runs on Cloudflare Workers with a
+Cloudflare D1 database. Cloudflare terminates TLS for it, so Cloudflare is
+the party seeing everything the section above describes: source IPs, channel
+ids, timing, and request sizes, for every poll and every post that goes
+through the default relay. When this document or the adversaries table below
+says "relay operator," that is who it means, for anyone who has not opted
+into a self-hosted relay. Self-hosting does not need Cloudflare either: the
+relay also runs as a plain Node server behind your own reverse proxy
+(`docs/SELF-HOSTING.md`), in which case your server, and whoever you trust
+with access to it, is the relay operator this section is about instead.
+
+What Cloudflare does not get is the plaintext. Positions, names, and circle
+membership are encrypted on the device before anything is sent, under keys
+that ride only in an invite link's fragment and are never transmitted to any
+relay in any form. A subpoena to Cloudflare gets ciphertext and metadata, the
+same thing a full database seizure gets, described above; it does not get a
+position or an identity, because there is no key on that side to produce
+them with.
+
+A subpoena or a court order aimed at the relay is served on Cloudflare, and
+Cloudflare can be compelled to comply without our knowledge or cooperation.
+That is worth being explicit about for anyone deciding whether the default
+relay is an acceptable trust boundary: the answer does not depend on trusting
+us, since we would have nothing to comply with even if asked, but it does
+depend on trusting Cloudflare's infrastructure to keep working the way this
+document describes it. Anyone who wants that boundary to be someone other
+than Cloudflare can run their own relay; see the FAQ and
+[docs/PROTOCOL.md](PROTOCOL.md) for how.
+
+## Adversaries considered
+
+| adversary | result |
+|---|---|
+| Relay operator, or attacker with full DB read | ciphertext plus the metadata above; no positions, no identities, and no epoch older than what a device's retained history window still holds |
+| Attacker who scrapes a `channel_id` (128-bit, unguessable; would require relay compromise) | can fetch ciphertext they cannot decrypt without a device's retained keys; can write junk rows that fail GCM authentication on every member's device and render as nothing; cannot overwrite real members (writes are signature-checked against pinned keys) |
+| Network attacker replaying captured requests | blocked by the strictly-increasing `(epoch, ts)` rule receivers enforce themselves, independent of the relay; cross-channel and cross-member replay blocked by AAD binding, which now also binds the epoch |
+| Malicious circle member | already trusted with your location while you share; can spam or lie about their own position, and can trigger a re-key to remove other members (any member may re-key by design, see `docs/PROTOCOL.md`, "Re-keying"). Cannot speak as another member: receivers verify each sender's signature against that member's pinned key. Remedy for a member you no longer trust is removal via re-key, which is cryptographically complete, not a request they can ignore |
+| Malicious member colluding with the relay | still cannot forge another member's position, and still cannot un-remove itself after the rest of the circle re-keys without it, because the next generation's seed is mixed from ECDH entropy delivered only to retained members |
+| A stranger who claims a member seat by posting to the circle channel first | refused: a `member` record is only ever honoured on an invite channel, sealed to a verified inviter's welcome context, never on a circle channel (`app/js/membership.js`, `circleControl`). A circle channel carries exactly one control type, `rekey`, and a re-key is only ever accepted from a sender already pinned before that ingest pass began (`app/js/net.js`, `wasPinned`), so a first-seen sender cannot pin itself and be obeyed in the same breath |
+| Malicious server operator shipping poisoned app JS | fatal, as for every web app including web clients of E2EE messengers. Mitigations: no third party scripts, strict CSP, subresource-free single origin, service worker pins the app shell. Real fix is a store-distributed native wrapper; the Android app already ships that way, though not yet through an app store, see "Distribution, honestly" below |
+| Stolen unlocked phone, app lock OFF | attacker sees what the app shows and holds the circle's current keys. Panic wipe clears local state; rotating the circle from another device cuts the stolen device off at the next re-key, and everything older than the stolen device's own retained window was already gone before it was stolen |
+| Stolen unlocked phone, app lock ON | the circle secret is AES-256-GCM encrypted at rest under a random vault key, itself wrapped by an Argon2id (64 MiB, three passes) key from the passcode and, optionally, a WebAuthn PRF secret or (Android) a Keystore key gated behind biometrics. A locked app holds no plaintext secret, vault key, or channel id in memory or on disk. `test/e2e_lock.py` asserts the plaintext secret is deleted the moment lock turns on and that a reload comes back with no derivable channel |
+| A device that missed more than 30 days of a generation's traffic | cannot advance that generation's ratchet further on its own (`MAX_CATCHUP_EPOCHS` refuses the jump); recovery is a fresh invite, the same path as a new member, not a silent failure that looks like a working app |
+| Malicious server operator shipping poisoned app JS on Android | does not apply the same way: the Android app's assets ship inside the signed APK, not fetched from the server on every load |
+| Malicious server operator targeting one visitor to `/help` (the beacon viewer, the one page the hosted site still serves for security-relevant work) | not stopped, only made checkable: `script-src 'self'`, no third party code, and published per-release asset hashes (`tools/asset-hashes.mjs`) turn a targeted swap into a detectable event for anyone who diffs the live page against the manifest, not a prevented one. See [docs/WEB-INTEGRITY.md](WEB-INTEGRITY.md) for why this is the honest ceiling and why circles never go through the browser at all |
+
+## Design consequences (privacy first, opposite defaults to Life360)
+
+- Sharing is **off** until you turn it on, and the UI always shows a live
+  sharing indicator while it is on.
+- Coarse mode degrades your position on your device before encryption, so
+  even circle members only get neighborhood accuracy when that is what you
+  chose.
+- Stopping sharing is one tap and posts an authenticated `bye` so others see
+  "stopped" instead of a silently stale dot.
+- Map tiles come from a tile server when a basemap is on; that reveals your
+  viewport to the tile host. The privacy basemap ("Off-grid") renders locally
+  and makes zero tile requests. The settings screen explains this trade.
+- No analytics, no telemetry, no crash reporting, no third party requests of
+  any kind from the app origin.
+- Optional app lock encrypts the circle secret at rest. It is off by default
+  (like Signal's screen lock), turns on with a passcode, and can add
+  biometric unlock where the platform supports it. Auto-lock relocks after a
+  chosen idle delay in the background, and every launch starts locked.
+- Places (named spots with arrival and leave alerts) are computed on-device
+  against positions that already arrive as part of sharing. Nothing about a
+  place, not its name, not its coordinates, not even that one exists, is
+  ever sent to the relay or to other members. With the app lock on, the
+  place list is sealed at rest under the same vault key as the circle
+  secret, and a plaintext copy left behind by an interrupted lock
+  transition is adopted and resealed at the next unlock rather than left
+  readable.
+- A place can carry a privacy fence. While your precise position falls
+  inside a fenced place, the position that gets sealed and sent is the
+  place's center, not the fix, and the accuracy field is withheld; your
+  circle sees that you are there, never where within. The snap happens
+  before encryption on your own device, the message is padded to the same
+  fixed size as every other, and the relay sees the same opaque post either
+  way, so neither the relay nor a member's client can tell a fence exists.
+  Two honest edges: an SOS always sends your real position, because someone
+  coming to help needs it, and fences apply to precise mode only, since the
+  neighborhood grid is already coarser than any fence. Circle members DO
+  receive the fence center while you are inside, which is exactly the
+  point: treat a fenced place's center as shared the way any position is.
+- An optional duress passcode runs the full panic wipe from the lock screen
+  and comes back up as a fresh install. It can never equal the unlock
+  passcode, in either direction of change.
+
+## Known limits, stated plainly
+
+1. **No human security audit, and that gap is not theoretical.** The
+   constructions are deliberately boring (AES-GCM, HKDF-SHA-256,
+   Ed25519/P-256, all through WebCrypto), the design is written down before
+   the code, and 500-plus unit tests replay committed test vectors an independent
+   implementation could check itself against. None of that is a substitute
+   for an independent reviewer. What verification exists: negative controls
+   run against the load-bearing security tests (deliberately breaking the
+   implementation and confirming the matching test fails, so a passing suite
+   is evidence the check is wired to something real, not just present),
+   headless-browser end to end suites driving real Firefox through create,
+   invite, a byte-for-byte safety number comparison, accept, re-key,
+   cross-visibility, check-in, SOS, the help viewer, revocation, and app
+   lock, two rounds of multi-agent adversarial review with independent
+   refutation, and a cross-model audit using a different model family than
+   the one that wrote the code. The second adversarial round found about
+   thirty real defects in code the first round had already passed over and
+   marked reviewed; the cross-model audit found two more real bugs after
+   that. That trajectory is itself the evidence: more review kept finding
+   real bugs, not diminishing returns, and there is no reason to believe the
+   pattern stopped because the reviewing stopped. Weigh every other claim in
+   this document accordingly, and see [docs/AUDIT.md](AUDIT.md) for exactly
+   where to start looking.
+2. **Forward secrecy is bounded by the history window, not absolute.** A
+   device that has advanced past an epoch has destroyed that epoch's key;
+   anything still inside its retained window (10 minutes to 24 hours,
+   depending on the user's setting) is still on the device, in memory or on
+   disk, because that is the trail the user chose to be able to read. A
+   device compromise that catches the key before it is destroyed exposes
+   only what remains in that window, never the full circle history.
+3. **Post-compromise security requires an actual re-key.** Holding a
+   compromised device's current keys is not automatically remediated; someone
+   has to trigger a re-key (removing the compromised device, or a manual "new
+   keys now") for the circle to heal. Nothing detects a compromise on its
+   own.
+4. **The relay still learns metadata.** IP addresses, timing, and how many
+   members post to a channel. There is no cover traffic and no mixnet. On top
+   of a VPN or Tor this drops to the exit's IP; the timing and the count
+   remain regardless. The steady-cadence setting hides only *when* a member
+   moves, not that the relay sees traffic from them at all.
+5. **An SOS is a correlation signal, even though its keys are unlinkable.** A
+   circle channel and a beacon channel from the same device update at the
+   same time from the same IP. A relay operator watching traffic does not
+   need to break anything to notice that.
+6. **Bus factor is one, and there are close to zero real users.** This is one
+   person's design and one person's code review. There is no team, no second
+   reviewer, no institution behind it, and no track record yet of running
+   under real adversarial conditions.
+7. **A browser cannot zeroise memory or guarantee a storage overwrite erases
+   anything.** Deleted keys are `.fill(0)`'d and dropped, but JavaScript
+   garbage collects rather than zeroises, and IndexedDB writes go through a
+   database engine and, usually, a flash translation layer that may leave old
+   bytes physically present until the underlying block is reused. Forward
+   secrecy is a claim about what the application retains and requests to
+   read, not a claim about what is physically recoverable from a seized
+   device. See `docs/PROTOCOL.md`, "History window and destruction," and
+   `docs/AUDIT.md`, "Deletion schedule, honestly," for the specifics.
+8. **Anyone in a circle sees everyone in it.** There is no sub-grouping and
+   no per-member visibility control. A member who is compromised compromises
+   the circle's present; the design's answer is fast, complete removal via
+   re-key, not preventing that member from having seen anything up to the
+   point they are removed.
+9. **No post-quantum protection.** P-256 and Ed25519 throughout. A
+   harvest-now-decrypt-later adversary who records today's ciphertext and
+   waits for a cryptographically relevant quantum computer is in scope for
+   this threat model and not addressed by the cryptography here. It is
+   bounded only by the relay's 24-hour retention: nothing recorded off the
+   wire can be decrypted later even with unlimited future compute, because
+   the relay itself does not keep it past a day, and a device's own retained
+   window is shorter than that for most settings.
+10. **A circle invite still needs a human to say yes.** v2 removes the
+    bearer-token weakness of a v1 invite, but the cost is real: the inviter
+    has to come back online and accept the joiner's safety number before the
+    joiner gets any key material. A stolen link is inert until then, and
+    inert afterward too unless a human accepts a safety number they were not
+    expecting. Whoever holds a stolen link also cannot answer it: the
+    commitment in the fragment names the inviter's keys, so forging a welcome
+    means a second preimage on 128 bits rather than being quick.
+11. **Web platform ceiling.** Background sharing ends when the OS suspends
+    the tab. Starling is honest about being live-when-open (plus a wake lock
+    toggle) on the web, rather than pretending to be an always-on tracker;
+    the Android app's foreground service is what actually solves this, at
+    the cost of a persistent notification.
+12. **App-lock passcode strength is the user's.** The at-rest encryption is
+    only as strong as the passcode behind it; Argon2id makes each guess cost
+    64 MiB and three passes, which takes the GPU shortcut away, but a
+    four-digit PIN is still ten thousand guesses. The Argon2id runs inside a
+    WebAssembly module with no imports, built from the reference
+    implementation and hash-pinned by the loader ([ARGON2.md](ARGON2.md)). There is no
+    passcode recovery by design: a forgotten passcode means erasing the
+    device and rejoining from an invite, because the secret is genuinely
+    unrecoverable without it.
+13. **The iOS app is a bundled wrapper, not the web page, and the web page
+    still does not open circles.** The old form of this limit said there was
+    no iOS app at all, because a browser tab cannot hold a long-lived circle
+    secret: every integrity mechanism Safari ships (Subresource Integrity,
+    the new Integrity-Policy header) checks served bytes against a reference
+    the origin itself supplies, so none of them help against a hostile or
+    coerced origin, and the extensions that make a targeted swap detectable
+    elsewhere do not exist on iOS. All of that still holds, and the hosted
+    site still refuses circles on every platform: see "The hosted web page
+    does not open circles" below and [WEB-INTEGRITY.md](WEB-INTEGRITY.md).
+    What changed is that `ios/` now ships what that argument actually calls
+    for: a wrapper whose page comes out of a signed app bundle, never off
+    the network, and holds a real circle. Its deltas against the Android app
+    are enumerated in "The iOS app's deltas" below; the largest is that
+    background sharing does not exist, because iOS has no equivalent of the
+    Android foreground service.
+14. **F-Droid ships the developer's APK, and trails a release.** Starling
+    has been on F-Droid since 2026-09-23 as a reproducible build: F-Droid
+    builds the tagged source itself, checks that the result matches the
+    APK published on GitHub, and then distributes that developer-signed
+    APK rather than one signed with its own key. That makes F-Droid an
+    independent check that the published APK comes from the published
+    source, and it means one signature across F-Droid, GitHub and
+    starlingmap.app. What it does not mean is that F-Droid has every
+    release the day it ships: its build cycle can trail a tag by days, and
+    a release it has not built yet is only on GitHub and the site.
+15. **A duress passcode's existence is visible in storage.** The unlock
+    passcode's verifier is the GCM tag of a wrapped key, so it stores
+    nothing that says "a passcode exists" beyond the lock itself. A duress
+    code unlocks nothing, so its verifier is an Argon2id hash sitting in the
+    clear (PBKDF2 for a duress code set before 0.16, until it is set again), and anyone who reads the device's storage before the wipe can
+    see that a duress code is configured, though not what it is. What the
+    feature actually defends against is someone watching you type: the two
+    codes are indistinguishable at the keyboard, and by the time storage
+    can be read calmly, the wipe has either run or was never needed. If
+    your threat includes a forensic read BEFORE coercion, do not set one.
+16. **Event notifications go through the OS, and arrive only while the app
+    can listen.** On Android, an SOS, arrival, or low-battery alert posted
+    while the app is hidden is a system notification. Its title and text
+    never carry a member's name or a place name: those stay inside the app,
+    and the OS-level notification always reads the same generic line, on
+    every Android version and regardless of the device's own lock-screen
+    content setting. That last part matters because the setting does not
+    default the way you would guess: a `VISIBILITY_PRIVATE` notification's
+    real content is shown on the lock screen by default on stock Android
+    (`Settings.Secure.LOCK_SCREEN_ALLOW_PRIVATE_NOTIFICATIONS` ships `true`),
+    so a design that put a name or place in the notification and relied on
+    `VISIBILITY_PRIVATE` to keep it off a locked screen would not have,
+    unless the phone's owner had separately turned on "hide sensitive
+    notification content." Nothing is sent to any push service, there are no
+    push tokens, and the notification is built locally. With no push service
+    there is nothing that can wake a phone Starling is not running on: the
+    app polls in the background (the location-sharing service keeps it alive
+    while you share), so alerts reach a pocketed phone while sharing is on,
+    but a phone with the app swiped away, frozen by the OS, or powered off
+    sees the alert on the next open. Life360-grade "the push wakes the phone
+    no matter what" is exactly the tradeoff Starling refuses, because the
+    token that buys it is an address a server holds for you. An SOS is the
+    one alert that is loud on purpose: it goes out on its own "Emergency
+    alerts" channel as an alarm (alarm audio usage and the alarm category),
+    so Do Not Disturb lets it through wherever alarms are allowed, which is
+    Android's default, and it plays at the alarm volume. Its text is the
+    same generic line as every other alert. Settings, Places and alerts
+    opens that channel's system page for anyone who wants it through total
+    silence as well.
+17. **The sharing notification itself is a leak Android requires.** While
+    you share, Android requires a visible foreground notification ("Sharing
+    with your circle") for as long as the location service runs; there is no
+    code path that removes this and still keeps sharing working. Android 14
+    and later let a person swipe it away on an unlocked phone while the
+    service keeps running, so Starling puts it straight back for as long as
+    the share runs: hiding that a phone is sharing takes ending the share.
+    If you find a way to hide it while the share goes on, please report it
+    the way SECURITY.md asks.
+    Anyone holding the phone, locked or not, learns from it alone that
+    Starling is installed and is transmitting your position right now.
+    That notification also carries a Stop button. On Android 12 and up,
+    tapping it from a locked screen requires the device to be unlocked
+    first (`Notification.Action.Builder.setAuthenticationRequired`); on
+    Android 11 and below there is no such gate, and Stop fires straight from
+    the lock screen. Either way, since this fix, ending a share by tapping
+    Stop posts the same "Sharing stopped" notification that swiping the app
+    away already posted, so a share someone else ended from a locked phone
+    is not silently indistinguishable from one still running.
+18. **Localization is young.** The app has a translation layer (gettext
+    style: English source strings as keys, catalogs shipped with the app,
+    nothing fetched) and ships Spanish, German, French and Brazilian
+    Portuguese, selectable in settings or following the system language.
+    Honest caveats: Spanish was reviewed line by line by a native speaker
+    (issue #1); German, French and Portuguese are first passes by the
+    developer and have not had that review yet, and mistranslated security
+    guidance is worse than English, so rough edges deserve bug reports; the
+    website and long-form docs are still English; and no RTL language ships
+    yet, though the engine and document wiring are RTL-ready.
+    `tools/extract-strings.mjs` regenerates the full catalog for anyone who
+    wants to add a language, and a test refuses any new UI string that any
+    shipped catalog does not cover.
+
+## Emergency beacon
+
+An SOS mints a beacon: a separate share, on its own channel, under its own
+secret and its own fresh signing identity, for people outside the circle. The
+link opens in any browser with no app and no account.
+
+What it is good for: the neighbour, the colleague, the friend three blocks
+away who is not in your circle and will not install anything in the next two
+minutes.
+
+Its properties, as wired:
+
+- A help link is a **bearer capability for one emergency, scoped to one
+  viewer**. Whoever holds it watches that session's positions and nothing
+  else in the system: not the circle, not its other members, not any
+  history, and not any other viewer's link.
+- Each viewer gets an **independent secret and derived channel**. The relay
+  cannot link two viewers' channels to each other or to the circle by key
+  material. Revoking one viewer ends only that channel, with a final `bye`
+  so the helper sees "session ended" rather than a frozen dot; the others
+  keep receiving positions.
+- **Expiry is enforced at both ends.** Past a viewer's `expiresAt`, the
+  viewer page stops polling and says the link is over, and the beacon stops
+  posting to that viewer's channel independently, so a link that says it is
+  dead has nothing left on the relay to read even if the viewer page were
+  bypassed.
+- The beacon is **memory-only** and ends on check-in, stop-sharing, app lock,
+  or process death, sending `bye` to every still-live viewer. A new SOS mints
+  new secrets for every viewer, so an old link stays dead.
+- The relay learns that some number of beacon channels exist and their
+  posting cadence. It cannot link any of them to a circle by key material or
+  member id, though a relay watching traffic timing can see a beacon channel
+  and a circle channel updating together from one address at the same
+  instant, as described above.
+- Anyone the link reaches can **forward it**. That is inherent to a link that
+  works with no account, and it is the trade being made: reachability in an
+  emergency, in exchange for not controlling who ends up watching a link
+  once it is sent. Revocation stops a specific viewer's *channel*; it does
+  not un-send a link that person already forwarded again before you revoked.
+- The viewer page **loads street tiles immediately**. It is an emergency
+  page for someone with no app, so it opens on a real map with no off-grid
+  option, which means every helper's browser fetches
+  `tile.openstreetmap.org` tiles of the shared position's area: the tile
+  host sees each helper's IP and the emergency's street-level viewport, on
+  top of the relay metadata above. A helper who cannot accept that should
+  not open the link from a network they need to protect.
+
+## Check-in timer
+
+A check-in timer is a deadline you set for yourself: check in within the hour,
+or your circle hears about it. While it runs, every post from your phone carries
+the deadline inside the sealed plaintext, and it is your circle's phones that
+notice when it passes. The alert does not depend on your phone being on, which
+is the point: a phone that was taken, smashed or switched off cannot report
+itself missing.
+
+- The relay learns nothing new. The deadline rides inside the same padded
+  ciphertext as everything else, and setting a timer is one more post of the
+  usual size, which looks like any other check-in or position.
+- Phones on older versions ignore the field, so anyone in your circle still
+  running one is not told when you miss a check-in.
+- A receiver hears about a missed check-in only while its own app can listen,
+  the limit in item 16 above. If every phone in your circle is off or has the
+  app swiped away, the alert waits for the next one to open the app.
+- Only a check-in tapped on your phone stops it. Stopping sharing, the app
+  lock, leaving the circle, Panic and the duress passcode all leave the deadline
+  where it is on the other phones, on purpose: someone made to stop sharing or
+  wipe the app is exactly who the timer is for. The cost is that a wipe you
+  chose still ends in an alert at the deadline unless you check in first.
+- The deadline is kept on your phone in plaintext next to the circle identity,
+  like the record that a share was running, so a seized phone shows that a
+  timer is set and when it runs out, even with the app locked.
+
+## Multiple circles
+
+Since 0.3.0 a device can hold several circles, one active at a time. As of
+0.5.0 the storage layer (`app/js/circles.js`) holds each circle as a v2
+generation, not a flat secret: a `genMeta` record naming the generation
+(`g`, `e0`, the epoch the retained chain key belongs to, the channel id), the
+retained chain key itself (still called `secret` in the storage layer, for
+continuity with every crash-window rule already proven around that slot, but
+now the oldest chain key the ratchet still holds rather than a permanent
+root), and the pinned member roster with both keys per member.
+
+Each circle has its own generation, its own channel, and its own signing
+identity, created fresh on join; the relay sees no link between the channels
+a device belongs to. Polling and sharing happen only for the active circle.
+At rest, inactive circles' names, generation metadata, pinned rosters,
+profiles, and timestamps live in one sealed blob under the same vault key as
+the active circle's state when the app lock is on; their signing and
+agreement keypairs are non-extractable CryptoKeys stored beside it, which
+means a locked device still reveals how many identities it holds but no
+names, keys, or channel ids. Mid-switch crash safety is duplicate-not-lose:
+the array grows to hold both circles before the active slots change hands and
+shrinks only afterwards, and boot and unlock reconciliation drop whatever
+duplicate a crash strands.
+
+## The hosted web page does not open circles
+
+The page at starlingmap.app is a landing plus the demo. It hides the create
+and join paths, never decrypts a stored circle, and points invite links at
+the apps - the Android APK, or on iOS the build-from-source wrapper, whose
+paste-join flow is the hand-off until universal links exist. Rationale: the web delivery channel is the weakest link in this
+design, and the browser offers no OS-keystore-backed storage for a long-lived
+circle secret. Removing circles from the hosted surface removes its value as
+a target. The full app still runs on localhost for development, and the test
+suites exercise it there.
+
+The one page the hosted site does serve for security-relevant work is
+`/help`, the beacon viewer, because a beacon secret is short-lived and scoped
+to one emergency rather than long-lived and scoped to a whole circle's
+history. [docs/WEB-INTEGRITY.md](WEB-INTEGRITY.md) states exactly what a
+strict CSP and published asset hashes buy for that page (a targeted swap
+becomes detectable) and what they do not (prevented, or automatically
+caught): the honest state of the art here is a deterrent, not a guarantee,
+and that is why circles stay off the web entirely rather than getting the
+same trade.
+
+## Distribution, honestly
+
+- **GitHub release and the direct APK at starlingmap.app.** Both work today
+  and are signed with the same key (`AllowedAPKSigningKeys` in
+  `docs/fdroid/app.starlingmap.yml`).
+- **F-Droid.** Live since 2026-09-23 at
+  <https://f-droid.org/packages/app.starlingmap/>, shipping the same
+  developer-signed APK after a reproducible-build check; see "F-Droid ships
+  the developer's APK, and trails a release" above.
+- **Google Play.** In progress, not live as of this writing.
+- **iOS.** Build-from-source only: the wrapper in `ios/` compiles with Xcode
+  and runs on your own device, re-signed every 7 days on a free Apple ID.
+  No App Store, no TestFlight (both wait on a paid developer account). It is
+  a wrapper around the bundled app, not the web page; see the iOS limit
+  above and "The iOS app's deltas" below.
+
+## Android app deltas
+
+The Android app is the same `app/` code inside a native WebView wrapper.
+Everything above still applies; this section states what changes on Android
+and why none of it weakens the core claim (the relay never sees a position).
+
+- **Asset origin, no service worker.** App assets are bundled into the APK
+  and served locally through `WebViewAssetLoader` at
+  `https://appassets.androidplatform.net/`, which WebView treats as a
+  secure context, so WebCrypto and IndexedDB behave the same as on the web.
+  `sw.js` is never registered in the wrapper: there is nothing to cache
+  offline when the app itself already ships as the offline copy. This also
+  removes the service-worker-pins-the-shell mitigation the web threat model
+  leans on for a compromised-server scenario, but the wrapper does not need
+  it, since its assets ship in the signed APK rather than being fetched
+  from the server on every load.
+- **Keystore-backed biometric wrap, not WebAuthn PRF.** A plain WebView has
+  no `navigator.credentials`, so the wrapper cannot use the web app's
+  WebAuthn PRF path. It substitutes a native bridge: an AES-GCM key held in
+  the Android Keystore with `setUserAuthenticationRequired(true)`, unlocked
+  through `BiometricPrompt` with a `CryptoObject`. This is hardware-gated
+  the same way PRF is (the key material never leaves secure hardware), and
+  Android invalidates the Keystore key automatically when the user's
+  biometric enrollment changes, closing the same "new fingerprint added by
+  an attacker" gap PRF closes on the web. The passcode path (Argon2id, the
+  same WebAssembly module as everywhere else) is unchanged and remains the
+  guaranteed unlock method.
+- **Foreground service visibility.** Background location sharing runs as an
+  Android foreground service, which Android requires to show a notification
+  the entire time it runs. Android 14 and later let that notification be
+  swiped away on an unlocked phone; Starling posts it again at once while
+  the share runs. This is a design constraint the app leans into rather than
+  works around: sharing is never silent, matching the same "always show a
+  live sharing indicator" principle from the web app's design consequences
+  above. The service requests fine and coarse location while-in-use only; it
+  does not request `ACCESS_BACKGROUND_LOCATION`, and it only starts while
+  the app has foreground state to begin with.
+- **Keeping the page running with the screen off.** Chromium freezes a
+  hidden page after a minute or five, which stopped every share whose phone
+  was put down. During a share the wrapper makes the page visible to
+  Chromium for a second whenever it freezes, and after a swipe with "keep
+  sharing when the app is closed" on it holds the page in a window on a
+  private virtual display the app owns. Nothing is drawn there: the window's
+  root view is hidden, it never gets a surface, and no other app can see or
+  capture a private display. The keys stay in the same page in the same
+  process, exactly as they did before; the change is that the page keeps
+  running. Two permissions come with it. `WAKE_LOCK` keeps the CPU up for the
+  seconds a fix takes to seal and post, only during a share.
+  `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` lets the app ask once, in a system
+  dialog the person answers, to be left out of battery optimization. Neither
+  reads or reaches any data.
+- **The sharing report.** Settings can copy a plain-text report for bug
+  reports: versions, the device model, permission and battery states, and
+  counts and ages. It is built from a fixed list of fields, each checked
+  against the shape it should have, so it cannot carry a position, a key, a
+  name, a place, a circle or a relay address. The app never sends it; the
+  person pastes it wherever they choose.
+- **Panic trigger via PanicKit.** The app responds to
+  `info.guardianproject.panic` `ACTION_TRIGGER` from a paired app (for
+  example Ripple) by immediately wiping IndexedDB, localStorage, and
+  WebView's storage and cache, with no confirmation step, then closing the
+  activity. Pairing itself (`ACTION_CONNECT`) is a visible, user-initiated
+  step, and the trigger handler checks the sender package against the
+  paired app before acting, so an arbitrary app on the device cannot fire a
+  wipe by sending the intent. This is the same effect as the in-app panic
+  wipe button, reachable without unlocking the app first.
+- **Tile fetches and relay visibility unchanged.** The Android app talks to
+  the same relay over the same protocol, so everything in "What the relay
+  does learn, honestly" above applies without modification: IP addresses,
+  timing, and channel shape, never positions or identities. Map tile
+  requests to `tile.openstreetmap.org` behave identically to the web app,
+  including the Off-grid basemap's zero-request alternative.
+- **Custom relay trust boundary.** The Android app exposes the same
+  self-hosted relay setting as the web app. Pointing the app at a relay run
+  by someone else, malicious or not, does not change what that relay can
+  learn: ciphertext, IPs, and timing, the same set described above for the
+  default relay. A malicious custom relay cannot read positions or
+  identities any more than a malicious default-relay operator could,
+  because the encryption boundary is the client, not the server a client
+  happens to be configured to talk to. It could, however, refuse to expire
+  data, drop or delay messages, or log metadata more aggressively than the
+  default relay does; those are availability and metadata-retention risks,
+  not confidentiality risks, and are the user's own choice when they pick a
+  relay to trust.
+
+## Your own server (Android)
+
+Settings, Sharing, "Your own server" sends your own position to an address you
+give, in OwnTracks' HTTP format, while a share runs. It is for people who
+already run Reitti, Dawarich, Home Assistant or an OwnTracks forwarder, so one
+app does the GPS work (#10).
+
+- It is plaintext by design. The server you point it at is yours and reads your
+  position, the way any OwnTracks server does. The relay's blindness does not
+  extend to it. Only your own position goes there, never your circle's.
+- It goes straight from the wrapper (`Forward.kt`), over https only, following
+  no redirects, at most once every 15 seconds, and only while the location
+  service runs, which is only during a share.
+- It never leaves outside Tor. With Tor mode on it sends nothing.
+- A second destination for a position is what someone with access to your
+  phone would set, so it is never quiet. The sharing notification names the
+  host (the private version; the lock screen version stays generic), so does
+  the line under your name, and with the app lock on, setting, changing or
+  clearing it needs the passcode. The duress passcode is refused there like
+  any wrong one.
+- The address, key included, sits in the wrapper's private preferences like
+  its other settings, outside the vault. Settings and the data export show the
+  host only, never the address, since servers put their key in its query. The
+  panic wipe clears it with everything else.
+- Your server gets your precise position whatever the precision setting.
+
+## The iOS app's deltas
+
+The iOS app is the same `app/` code inside a WKWebView wrapper (`ios/`),
+served from the bundle on `starling://localhost`. Everything above still
+applies: same protocol, same relay visibility, same encryption boundary.
+What changes, honestly:
+
+- **No background sharing, ever, in this build.** iOS offers nothing like
+  the Android foreground service, and the wrapper deliberately ships no
+  `StarlingNative` bridge, so `canShareInBackground()` reads false and the
+  UI keeps saying sharing runs only while the app is open with the screen
+  on. A wrapper that claimed more would be lying; this one does not.
+- **No PanicKit, no OS-level wipe, no keystore vault, no Orbot awareness.**
+  The in-app wipe (and the duress code that triggers it) clears everything
+  the page can reach: IndexedDB, localStorage, and its own state. What it
+  cannot reach from JS is WebKit's HTTP cache, where map tiles of viewed
+  areas can persist until iOS evicts them; the in-app wipe confirmation
+  already discloses this residual, and the Off-grid basemap never creates
+  it. A native cache-clear bridge is roadmap; until it ships, the honest
+  statement is "the wipe leaves cached tiles behind on iOS".
+- **Backups.** The wrapper marks WebKit's data store excluded from iCloud
+  and device backups at every launch, the same decision Android makes with
+  `allowBackup="false"`: a circle secret that rode into a cloud backup
+  would outlive the phone it was scoped to.
+- **Tile fetches behave exactly as they do everywhere else.** Street
+  basemaps and the beacon helper page load tiles from
+  `tile.openstreetmap.org` on iOS the same way the web and Android builds
+  do, viewport and all, and the helper page loads them immediately because
+  an emergency page that waited on a map consent would be worse than the
+  disclosure. The Off-grid basemap's zero-request alternative works here
+  too. No iOS-specific mitigation exists or is pretended.
+- **Invite links do not open the app.** No universal links yet (they need a
+  paid team's association file), so a tapped invite opens Safari's landing
+  page; joining means copying the link and pasting it inside the app. The
+  landing copy says so on iOS rather than pointing at an APK.
+- **Distribution is the weakest link.** Build-from-source, self-signed,
+  7-day re-sign on a free Apple ID. No store review, no TestFlight, and no
+  reproducible-build story yet on this platform; the APK's verification
+  path does not exist here. Treat the iOS build as something you compile
+  and vouch for yourself.

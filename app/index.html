@@ -1,0 +1,605 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- connect-src carries https: for the Android wrapper, which loads this page
+     from bundled assets and talks to the relay cross-origin. On the web the
+     served header pins connect-src to 'self' and browsers enforce the
+     intersection of both policies, so the site keeps its strict posture. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob: https://tile.openstreetmap.org; connect-src 'self' https:; manifest-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="theme-color" content="#0a0d14">
+<meta name="description" content="Private, end to end encrypted location sharing for your circle. No accounts, no tracking. Free Android app, live demo in the browser.">
+<!-- iOS reads the web manifest's display mode on recent versions but has
+     relied on these two meta tags for full-screen, no-Safari-chrome launch
+     since Add to Home Screen existed; keeping both is what makes install
+     behave the same on an iOS that ignores the manifest as on one that
+     doesn't. black-translucent draws under the status bar, which is why the
+     map screen already pads for env(safe-area-inset-top) in tokens.css. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Starling">
+<link rel="canonical" href="https://starlingmap.app/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Starling">
+<meta property="og:title" content="Starling: private location sharing">
+<meta property="og:description" content="End to end encrypted location sharing for your circle. No accounts, no tracking. Free Android app, live demo in the browser.">
+<meta property="og:url" content="https://starlingmap.app/">
+<meta property="og:image" content="https://starlingmap.app/icons/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The Starling logo: private location sharing for your circle.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Starling: private location sharing">
+<meta name="twitter:description" content="End to end encrypted location sharing for your circle. No accounts, no tracking.">
+<meta name="twitter:image" content="https://starlingmap.app/icons/og.png">
+<meta name="twitter:image:alt" content="The Starling logo: private location sharing for your circle.">
+<title>Starling: private location sharing</title>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Starling",
+  "operatingSystem": "Android",
+  "applicationCategory": "UtilitiesApplication",
+  "description": "Private, end to end encrypted location sharing for your circle. No accounts, no tracking.",
+  "url": "https://starlingmap.app/",
+  "downloadUrl": "https://github.com/munzzyy/starling/releases/latest/download/starling.apk",
+  "installUrl": "https://f-droid.org/packages/app.starlingmap/",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "author": { "@type": "Person", "name": "Munzzyy", "url": "https://github.com/munzzyy" },
+  "license": "https://github.com/munzzyy/starling/blob/main/LICENSE"
+}
+</script>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="modulepreload" href="js/env.js">
+<link rel="modulepreload" href="js/platform.js">
+<link rel="modulepreload" href="js/wire.js">
+<link rel="modulepreload" href="js/fmt.js">
+<link rel="modulepreload" href="js/crypto.js">
+<link rel="modulepreload" href="js/store.js">
+<link rel="modulepreload" href="js/net.js">
+<link rel="modulepreload" href="js/outbox.js">
+<link rel="modulepreload" href="js/export.js">
+<link rel="modulepreload" href="js/map.js">
+<link rel="modulepreload" href="js/ui.js">
+<link rel="modulepreload" href="js/geo.js">
+<link rel="modulepreload" href="js/lock.js">
+<link rel="modulepreload" href="js/qr.js">
+<link rel="modulepreload" href="js/demo.js">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/landing.css">
+<script defer src="vendor/leaflet/leaflet.js"></script>
+<script type="module" src="js/main.js"></script>
+</head>
+<body>
+
+<section id="screen-lock" class="screen" data-testid="lock-screen" hidden>
+  <div class="lock-wrap">
+    <div class="lock-logo-ring">
+      <img class="lock-logo" src="icons/starling.svg" alt="" width="64" height="64">
+    </div>
+    <h1 class="lock-title" data-i18n>Locked</h1>
+    <p class="lock-sub" id="lock-sub" data-i18n>Enter your passcode to open your circle.</p>
+    <form class="lock-form" id="lock-form" autocomplete="off">
+      <input class="lock-input" id="lock-input" data-testid="lock-input" type="password"
+        inputmode="numeric" autocomplete="off" aria-label="Passcode" placeholder="Passcode" data-i18n-attr="aria-label,placeholder">
+      <p class="lock-error" id="lock-error" role="alert" hidden></p>
+      <button type="submit" class="btn btn-primary" id="lock-unlock" data-testid="lock-unlock" data-i18n>Unlock</button>
+    </form>
+    <button type="button" class="btn btn-secondary lock-bio" id="lock-bio" data-testid="lock-bio" hidden>
+      <span class="lock-bio-icon" aria-hidden="true"></span>
+      <span data-i18n>Unlock with biometrics</span>
+    </button>
+    <button type="button" class="btn btn-ghost lock-wipe" id="lock-wipe" data-testid="lock-wipe" data-i18n>Forgot passcode</button>
+  </div>
+</section>
+
+<section id="screen-oldweb" class="screen" hidden>
+  <div class="ob-wrap">
+    <div class="ob-hero">
+      <h1 class="ob-wordmark">starling</h1>
+      <p class="ob-tagline">This browser is missing WebCrypto or IndexedDB, which Starling needs for its encryption. Update Android System WebView or switch to a current browser, then reopen Starling.</p>
+    </div>
+  </div>
+</section>
+
+<section id="screen-onboarding" class="screen" hidden>
+  <div class="ob-wrap">
+    <div class="ob-hero">
+      <div class="lnd-aurora" aria-hidden="true"><span class="lnd-bird"></span><span class="lnd-bird"></span><span class="lnd-bird"></span><span class="lnd-bird"></span><span class="lnd-bird"></span><span class="lnd-bird"></span><span class="lnd-bird"></span></div>
+      <div class="ob-logo-ring">
+        <img class="ob-logo" src="icons/starling.svg" alt="" width="84" height="84">
+      </div>
+      <h1 class="ob-wordmark">starling</h1>
+      <p class="ob-tagline" data-i18n>Your people, on your map. Nobody else.</p>
+      <p class="lnd-subline">Create a circle, send one link, and watch each other arrive.
+        Nothing about where you are ever leaves your phone in a form anyone else can read.
+        <span class="web-only">The app lives on Android today; iPhone owners can build the
+        iOS app from source, or watch the demo below.</span></p>
+      <ul class="lnd-trustrow">
+        <li><span class="lnd-trust-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 3 4.5 6v6c0 4.4 3 7.9 7.5 9 4.5-1.1 7.5-4.6 7.5-9V6L12 3Z"/></svg></span>End-to-end encrypted</li>
+        <li><span class="lnd-trust-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4.5 20.5v-1a6.5 6.5 0 0 1 13 0v1M11 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m17 9 1.6 1.6L22 7"/></svg></span>No accounts</li>
+        <li><span class="lnd-trust-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 7.5V12l3 2"/></svg></span>Server keeps nothing past 24h</li>
+        <li><span class="lnd-trust-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m8 9 4-5 4 5M6.5 12h11l1 8h-13l1-8Z"/></svg></span>Open source</li>
+      </ul>
+    </div>
+
+    <div class="lnd-state-stack">
+      <div class="land-card land-note" id="landing-invite" hidden>
+        <h2 class="land-card-title">You have an invite</h2>
+        <p class="land-card-sub">Invites open in the app, where your circle's secret lives
+          outside the browser. On Android: install the app below, then tap your invite link again
+          and it will join there. On an iPhone: there is no store app yet, so this link only works
+          if you build the iOS app yourself (see the iPhone question below) and paste the link
+          inside its Join screen. The secret in your link never left this device.</p>
+      </div>
+
+      <div class="land-card land-note" id="landing-legacy" hidden>
+        <h2 class="land-card-title">This browser holds an old circle</h2>
+        <p class="land-card-sub">Circles now live in the Android app, and the website no longer
+          opens them. The data sits untouched in this browser's storage, encrypted at rest only if
+          you had set a passcode. If you are done with it, erase it.</p>
+        <button type="button" class="btn btn-secondary" data-testid="landing-erase">Erase this browser's Starling data</button>
+      </div>
+
+      <div class="land-card land-note" id="join-waiting" data-testid="join-waiting" hidden>
+        <h2 class="land-card-title">Waiting to be let in</h2>
+        <p class="land-card-sub" id="join-waiting-text">Your request is sitting on the relay. It waits
+          until the person who invited you next opens Starling and accepts it; read them the number
+          below when they do.</p>
+        <span class="safety-cap">Your number</span>
+        <div class="safety" id="join-waiting-safety" data-testid="join-waiting-safety"></div>
+        <p class="land-card-note">Read these digits out to whoever invited you. The same number shows next to your
+          request on their phone, and that is how they know it is you asking.</p>
+        <button type="button" class="btn btn-secondary" id="join-waiting-cancel" data-testid="join-cancel">Cancel the request</button>
+      </div>
+
+      <div class="land-card land-note" id="install-card" data-testid="install-card" hidden>
+        <h2 class="land-card-title">Add Starling to your home screen</h2>
+        <p class="land-card-sub" id="install-text"></p>
+        <button type="button" class="btn btn-secondary" id="install-go" data-testid="install-go" hidden>Install Starling</button>
+      </div>
+    </div>
+
+    <div class="ob-actions">
+      <button type="button" class="btn btn-primary" data-testid="onboarding-create" data-i18n>Create a circle</button>
+      <button type="button" class="btn btn-secondary" data-testid="onboarding-join" data-i18n>I have an invite</button>
+      <button type="button" class="btn btn-ghost" id="hero-demo" data-testid="onboarding-demo" data-i18n>Watch the demo</button>
+    </div>
+    <p class="ob-footer" data-i18n>End-to-end encrypted. No accounts. Open protocol.</p>
+    <div class="ob-about" id="ob-about" hidden>
+      <a class="btn btn-ghost" id="about-site" href="https://starlingmap.app/" data-i18n>What Starling is and how it works &#8599;</a>
+      <button type="button" class="btn btn-ghost" data-testid="onboarding-relay" data-i18n>Use your own relay</button>
+    </div>
+
+    <section class="lnd-section lnd-how web-only" aria-labelledby="lnd-how-title">
+      <div class="lnd-how-grid">
+        <div class="lnd-how-copy">
+          <h2 class="lnd-eyebrow" id="lnd-how-title">How it works</h2>
+          <ol class="lnd-steps">
+            <li class="lnd-step">
+              <span class="lnd-step-num" aria-hidden="true">1</span>
+              <div>
+                <h3 class="lnd-step-title">Create a circle</h3>
+                <p class="lnd-step-text">No email, no phone number, nothing to sign. The app
+                  generates your keys on your device and never sends them anywhere.</p>
+              </div>
+            </li>
+            <li class="lnd-step">
+              <span class="lnd-step-num" aria-hidden="true">2</span>
+              <div>
+                <h3 class="lnd-step-title">Send one link</h3>
+                <p class="lnd-step-text">The invite burns after one use. Before it opens, you and
+                  your person read a short safety number out loud to each other and check it
+                  matches.</p>
+              </div>
+            </li>
+            <li class="lnd-step">
+              <span class="lnd-step-num" aria-hidden="true">3</span>
+              <div>
+                <h3 class="lnd-step-title">Watch each other arrive</h3>
+                <p class="lnd-step-text">Every position is sealed on your phone and opened on
+                  theirs. The relay in the middle moves envelopes it cannot open.</p>
+              </div>
+            </li>
+          </ol>
+        </div>
+        <div class="lnd-phone" aria-hidden="true">
+          <div class="lnd-phone-frame">
+            <div class="lnd-phone-notch"></div>
+            <div class="lnd-phone-map">
+              <div class="lnd-map-glow"></div>
+              <div class="lnd-dot lnd-dot-a"><span class="lnd-dot-halo"></span></div>
+              <div class="lnd-dot lnd-dot-b"><span class="lnd-dot-halo"></span></div>
+              <div class="lnd-dot lnd-dot-c"><span class="lnd-dot-halo"></span></div>
+            </div>
+            <div class="lnd-phone-sheet">
+              <div class="lnd-sheet-grabber"></div>
+              <div class="lnd-sheet-row"></div>
+              <div class="lnd-sheet-row lnd-sheet-row-short"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="lnd-section lnd-features web-only" aria-labelledby="lnd-features-title">
+      <h2 class="lnd-eyebrow" id="lnd-features-title">Private by construction, not by promise</h2>
+      <div class="lnd-feature-grid">
+        <div class="lnd-feature">
+          <span class="lnd-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="M12 3 4.5 6v6c0 4.4 3 7.9 7.5 9 4.5-1.1 7.5-4.6 7.5-9V6L12 3Z"/><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="m9 12 2 2 4-4"/></svg></span>
+          <h3 class="lnd-feature-title">End-to-end encrypted</h3>
+          <p class="lnd-feature-text">Every position is sealed with AES-256-GCM on your device.
+            The relay moves ciphertext it cannot read.</p>
+        </div>
+        <div class="lnd-feature">
+          <span class="lnd-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.7"/><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" d="M12 7.5V12l3 2"/></svg></span>
+          <h3 class="lnd-feature-title">Forward secrecy</h3>
+          <p class="lnd-feature-text">Keys retire every ten minutes and the old ones are
+            destroyed, so even a seized server or a stolen phone cannot read far into the past:
+            a day of scrambled data at most, less for any ten-minute window already gone.</p>
+        </div>
+        <div class="lnd-feature">
+          <span class="lnd-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="M4 11 12 4l8 7M6 10v9h5v-5h2v5h5v-9"/></svg></span>
+          <h3 class="lnd-feature-title">Places stay on your phone</h3>
+          <p class="lnd-feature-text">Name a Home, School, or Work and the app tells you who
+            arrived and who left. The server never learns those places exist.</p>
+        </div>
+        <div class="lnd-feature">
+          <span class="lnd-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="M12 3 2 20h20L12 3Z"/><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" d="M12 9.5v4.2"/><circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/></svg></span>
+          <h3 class="lnd-feature-title">SOS and help beacon</h3>
+          <p class="lnd-feature-text">Hold to send SOS to your circle, or open a revocable beacon
+            link that works in any browser. Members also get a heads up when someone's battery
+            is about to die.</p>
+        </div>
+        <div class="lnd-feature">
+          <span class="lnd-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="M12 20a8 8 0 1 0-6.9-4M5 20v-4h4"/></svg></span>
+          <h3 class="lnd-feature-title">Everything expires</h3>
+          <p class="lnd-feature-text">The relay deletes every row after 24 hours and keeps no
+            backups, so there is no history sitting around to leak.</p>
+        </div>
+        <div class="lnd-feature">
+          <span class="lnd-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><rect x="5" y="10.5" width="14" height="9.5" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path fill="none" stroke="currentColor" stroke-width="1.7" d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></span>
+          <h3 class="lnd-feature-title">Lock it, or torch it</h3>
+          <p class="lnd-feature-text">An optional passcode and biometric lock encrypt your circle
+            secret at rest. Panic wipe erases the lot instantly, and a duress passcode does it
+            silently if you're ever forced to unlock.</p>
+        </div>
+        <div class="lnd-feature">
+          <span class="lnd-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.7"/><path fill="none" stroke="currentColor" stroke-width="1.7" d="M4 12h16M12 4a12 12 0 0 1 0 16 12 12 0 0 1 0-16Z"/><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" d="m4 20 16-16"/></svg></span>
+          <h3 class="lnd-feature-title">Off-grid and Orbot</h3>
+          <p class="lnd-feature-text">Switch the map background off and the app makes zero
+            requests beyond the relay. Route it through Orbot, Android's Tor app, and the relay
+            never sees your real address.</p>
+        </div>
+        <div class="lnd-feature">
+          <span class="lnd-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="m12 3 9 5-9 5-9-5 9-5Z"/><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="m3 13 9 5 9-5"/></svg></span>
+          <h3 class="lnd-feature-title">Circles, plural</h3>
+          <p class="lnd-feature-text">One for family, one for the friends you split up from at a
+            fair. Separate keys, separate identities, one tap to switch.</p>
+        </div>
+        <div class="lnd-feature">
+          <span class="lnd-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="m9 18-5-6 5-6M15 6l5 6-5 6"/></svg></span>
+          <h3 class="lnd-feature-title">Yours to verify</h3>
+          <p class="lnd-feature-text">GPL licensed, reproducible Android builds, an open protocol,
+            and a relay you can run on your own server.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="lnd-section lnd-honesty web-only" aria-labelledby="lnd-honesty-title">
+      <h2 class="lnd-eyebrow" id="lnd-honesty-title">What the relay can see</h2>
+      <p class="lnd-honesty-lede">This is the part most apps do not put on their homepage. Here
+        is the honest line between what a full seizure of the relay's database would get someone,
+        and what it would not.</p>
+      <div class="lnd-honesty-table">
+        <div class="lnd-honesty-col lnd-honesty-never">
+          <h3 class="lnd-honesty-col-title">Never</h3>
+          <ul>
+            <li>Positions. Every location is AES-256-GCM encrypted on your device with a key that
+              never leaves it.</li>
+            <li>Names, avatars, or circle names. Identity travels only inside ciphertext.</li>
+            <li>Accounts, phone numbers, emails, or push tokens. There is nothing to link a
+              channel to a person except traffic metadata.</li>
+            <li>History past 24 hours. Rows expire on schedule and there are no backups.</li>
+          </ul>
+        </div>
+        <div class="lnd-honesty-col lnd-honesty-learns">
+          <h3 class="lnd-honesty-col-title">Learns, honestly</h3>
+          <ul>
+            <li>IP addresses and timing. Every poll and post reveals a source IP and a cadence.</li>
+            <li>How many members post to a channel. Not what they say: every message pads to the
+              same length.</li>
+            <li>That an SOS and a circle updated at the same instant from the same address. The
+              keys cannot be linked; the timing can.</li>
+            <li>That you use Starling at all, from the origin your device talks to.</li>
+          </ul>
+        </div>
+      </div>
+      <p class="lnd-honesty-note">Read the full
+        <a href="https://github.com/munzzyy/starling/blob/main/docs/THREAT-MODEL.md">threat model</a>
+        for exactly what this means and what it does not.</p>
+    </section>
+
+    <section class="lnd-section lnd-flow web-only" aria-labelledby="lnd-flow-title">
+      <h2 class="lnd-eyebrow" id="lnd-flow-title">One trip, sealed the whole way</h2>
+      <div class="lnd-flow-scroll">
+      <svg class="lnd-flow-svg" viewBox="0 0 720 200" role="img" aria-labelledby="lnd-flow-desc">
+        <desc id="lnd-flow-desc">Your phone seals a position into an envelope. The relay moves
+          that envelope, seeing only its size and timing, never its contents. Their phone opens
+          it.</desc>
+        <g class="lnd-flow-node" transform="translate(40,70)">
+          <rect class="lnd-flow-box" width="110" height="60" rx="14"/>
+          <path class="lnd-flow-icon" d="M35 12h40a6 6 0 0 1 6 6v24a6 6 0 0 1-6 6H35a6 6 0 0 1-6-6V18a6 6 0 0 1 6-6Z" fill="none"/>
+          <circle class="lnd-flow-icon" cx="55" cy="30" r="6" fill="none"/>
+        </g>
+        <text class="lnd-flow-label" x="95" y="150" text-anchor="middle">Your phone</text>
+
+        <path class="lnd-flow-arrow" d="M155 100h95" marker-end="url(#lnd-arrow)"/>
+        <g class="lnd-flow-node lnd-flow-envelope" transform="translate(258,78)">
+          <path class="lnd-flow-icon" d="M2 6h44v32H2Z" fill="none"/>
+          <path class="lnd-flow-icon" d="m2 6 22 17L46 6"/>
+        </g>
+        <text class="lnd-flow-label" x="280" y="150" text-anchor="middle">Sealed envelope</text>
+
+        <path class="lnd-flow-arrow" d="M330 100h60" marker-end="url(#lnd-arrow)"/>
+        <g class="lnd-flow-node" transform="translate(400,64)">
+          <rect class="lnd-flow-box lnd-flow-relay" width="130" height="68" rx="16"/>
+          <path class="lnd-flow-icon" d="M45 24h40M45 34h40M45 44h24" stroke-linecap="round"/>
+        </g>
+        <text class="lnd-flow-label" x="465" y="150" text-anchor="middle">Relay</text>
+        <text class="lnd-flow-sub lnd-flow-sees" x="465" y="168" text-anchor="middle">Sees: size, timing, ciphertext</text>
+        <text class="lnd-flow-sub lnd-flow-never" x="465" y="184" text-anchor="middle">Never: position, identity</text>
+
+        <path class="lnd-flow-arrow" d="M540 100h60" marker-end="url(#lnd-arrow)"/>
+        <g class="lnd-flow-node" transform="translate(610,70)">
+          <rect class="lnd-flow-box" width="110" height="60" rx="14"/>
+          <path class="lnd-flow-icon" d="M35 12h40a6 6 0 0 1 6 6v24a6 6 0 0 1-6 6H35a6 6 0 0 1-6-6V18a6 6 0 0 1 6-6Z" fill="none"/>
+          <path class="lnd-flow-icon" d="m47 27 6 6 12-12"/>
+        </g>
+        <text class="lnd-flow-label" x="665" y="150" text-anchor="middle">Their phone</text>
+
+        <defs>
+          <marker id="lnd-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path class="lnd-flow-arrowhead" d="M0 0 10 5 0 10Z"/>
+          </marker>
+        </defs>
+      </svg>
+      </div>
+    </section>
+
+    <section class="lnd-section lnd-faq web-only" aria-labelledby="lnd-faq-title">
+      <h2 class="lnd-eyebrow" id="lnd-faq-title">Common questions</h2>
+      <div class="lnd-faq-list">
+        <details class="lnd-faq-item">
+          <summary>Is it free?</summary>
+          <p>Yes. No ads, no premium tier, nothing to unlock. It is GPL licensed, so you can also
+            read every line that touches your position.</p>
+        </details>
+        <details class="lnd-faq-item">
+          <summary>Is there an iPhone app?</summary>
+          <p>There is an iOS app you can build yourself: the repository ships a wrapper that holds
+            a real circle, with the honest catch that iOS gives it no background sharing, and
+            installing it means a Mac with Xcode and re-signing every 7 days on a free Apple ID.
+            It is not on the App Store or TestFlight yet. The website itself still does not open
+            circles on purpose: a browser tab is the weakest place to keep a location secret.</p>
+        </details>
+        <details class="lnd-faq-item">
+          <summary>How is this different from mainstream family trackers?</summary>
+          <p>Their servers see every position you ever send. Starling's relay cannot see any of
+            them, because they never leave your device unencrypted. There is nothing on the relay
+            worth selling or worth a breach.</p>
+        </details>
+        <details class="lnd-faq-item">
+          <summary>What if someone grabs my invite link?</summary>
+          <p>Invites are one-time. Opening one starts a safety number check, so the person already
+            in the circle can see it is not who they expected. Anyone you no longer trust can be
+            removed with a re-key that cuts them off for good.</p>
+        </details>
+        <details class="lnd-faq-item">
+          <summary>What does this do to my battery?</summary>
+          <p>Sharing runs as a foreground service so the OS does not kill it, which does cost some
+            battery. It is the same trade-off any always-on location app makes, and sharing is off
+            until you turn it on.</p>
+        </details>
+        <details class="lnd-faq-item">
+          <summary>Can I run my own relay?</summary>
+          <p>Yes. The relay is small and open source, and runs on Cloudflare Workers or a plain
+            server behind Apache or nginx. Point the app at your own instance and Munzzyy's relay
+            never sees your traffic at all. Setup for both is documented in the
+            <a href="https://github.com/munzzyy/starling#deploy">README</a>.</p>
+        </details>
+        <details class="lnd-faq-item">
+          <summary>What happens in an emergency?</summary>
+          <p>Hold the SOS button and your circle gets an alert at your live position. On their
+            phones it lands as a notification while Starling runs in the background; a phone that
+            is off or has the app fully closed sees it on the next open, because there is no push
+            service to force it awake. You can also open a help beacon, a link that works in any
+            browser, for someone outside your circle, and revoke it the moment you are safe.</p>
+        </details>
+        <details class="lnd-faq-item">
+          <summary>What does Starling not do?</summary>
+          <p>No App Store iPhone app yet. No driving reports, speed alerts, or crash detection. No location
+            history older than a day, on purpose. If those are the features you need most,
+            Starling is not your app yet, and finding that out here beats finding it out after
+            you switched.</p>
+        </details>
+      </div>
+    </section>
+
+    <div class="land-card lnd-install-card web-only" id="landing-app">
+      <h2 class="land-card-title">Get the Android app</h2>
+      <p class="land-card-sub">Sharing keeps running with the screen off, your fingerprint opens
+        the app lock, and a panic wipe clears everything at once. No Google services inside.</p>
+      <a class="lnd-fdroid" data-testid="landing-fdroid"
+        href="https://f-droid.org/packages/app.starlingmap/"><img
+        src="icons/get-it-on-fdroid.png" alt="Get it on F-Droid" width="646" height="250"></a>
+      <p class="land-card-note lnd-fdroid-note">The easy way: F-Droid installs Starling and keeps it
+        updated. A new release can take a few days to reach it.</p>
+      <a class="btn btn-secondary land-download" data-testid="landing-download"
+        href="/starling.apk">Download the APK</a>
+      <p class="land-card-note">Served straight from this site; the same file is on the
+        <a href="https://github.com/munzzyy/starling/releases">releases page</a> with its
+        checksum, so you can verify what you installed.</p>
+      <p class="land-card-note">On GrapheneOS or any de-googled phone, add Starling to
+        <a href="https://tern.munzzyy.dev/add/?url=https%3A%2F%2Fgithub.com%2Fmunzzyy%2Fstarling">Tern</a> and it updates itself.</p>
+      <p class="land-card-note">F-Droid ships the same signed APK as GitHub and this site, so
+        you can switch where updates come from without reinstalling.</p>
+      <ul class="lnd-store-chips">
+        <li class="lnd-chip">Google Play: coming</li>
+      </ul>
+      <p class="land-card-note">Not ready to install anything yet? <a href="?demo=1">Watch
+        the demo right here</a> first.</p>
+    </div>
+
+    <footer class="land-footer web-only">
+      <p>Built by <a href="https://github.com/munzzyy">Munzzyy</a></p>
+      <nav class="land-links">
+        <a href="https://github.com/munzzyy/starling">Source</a>
+        <a href="https://github.com/munzzyy/starling/blob/main/docs/PROTOCOL.md">Protocol</a>
+        <a href="https://github.com/munzzyy/starling/blob/main/docs/THREAT-MODEL.md">Threat model</a>
+        <a href="/privacy">Privacy</a>
+        <a href="https://github.com/munzzyy/starling/blob/main/SECURITY.md">Security</a>
+      </nav>
+      <section class="land-more" aria-labelledby="land-more-title">
+        <h2 class="land-more-title" id="land-more-title">More apps by Munzzyy</h2>
+        <ul class="land-more-list">
+          <li><a href="https://github.com/munzzyy/sepia">Sepia</a>, for sharing a photo
+            without handing out your address.</li>
+          <li><a href="https://f-droid.org/packages/io.github.munzzyy.magpie/">Magpie</a>, for
+            documenting a dispute so it still proves something months later
+            (<a href="https://github.com/munzzyy/magpie">source</a>).</li>
+          <li><a href="https://github.com/munzzyy/blot">Blot</a>, for redacting a PDF so the
+            text is actually gone.</li>
+          <li><a href="https://github.com/munzzyy/sweep">Sweep</a>, for checking whether a
+            phone has stalkerware on it.</li>
+        </ul>
+        <p><a href="https://github.com/munzzyy">Everything else on GitHub</a></p>
+      </section>
+    </footer>
+  </div>
+</section>
+
+<section id="screen-map" class="screen" hidden>
+  <div id="map" aria-label="Map" data-i18n-attr="aria-label"></div>
+
+  <div class="top-chrome">
+    <div class="pill" data-testid="circle-pill">
+      <span class="status-dot dot-idle" id="status-dot" aria-hidden="true"></span>
+      <span class="vh" id="status-text" role="status">Not connected</span>
+      <button type="button" class="pill-open" data-testid="circle-open" aria-label="Switch circle" data-i18n-attr="aria-label">
+        <span class="pill-name" id="pill-name" dir="auto">My circle</span>
+        <svg class="pill-chevron" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <button type="button" class="pill-gear" data-testid="settings-open" aria-label="Settings" data-i18n-attr="aria-label">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Zm7.4-3.2c0 .5 0 .9-.1 1.4l2 1.6-1.9 3.3-2.4-1a7.5 7.5 0 0 1-2.4 1.4l-.4 2.6h-3.8l-.4-2.6a7.5 7.5 0 0 1-2.4-1.4l-2.4 1-1.9-3.3 2-1.6a8 8 0 0 1 0-2.8l-2-1.6 1.9-3.3 2.4 1a7.5 7.5 0 0 1 2.4-1.4l.4-2.6h3.8l.4 2.6a7.5 7.5 0 0 1 2.4 1.4l2.4-1 1.9 3.3-2 1.6c.1.5.1.9.1 1.4Z"/></svg>
+      </button>
+    </div>
+    <div class="banners" id="banners" role="status" aria-live="polite">
+      <div class="banner banner-demo" id="banner-demo" data-testid="demo-banner" hidden>
+        <span data-i18n>Demo flight - nothing is real</span>
+        <button type="button" class="banner-btn" id="banner-demo-map" data-testid="demo-map-toggle" data-i18n>Real map</button>
+        <button type="button" class="banner-btn" id="banner-demo-exit" data-i18n>Exit</button>
+      </div>
+      <div class="banner banner-demo" id="banner-demo-consent" data-testid="demo-map-consent" hidden>
+        <span data-i18n>Show the demo on a real map? Tiles of its Central Park stage load from openstreetmap.org - the demo's only network use.</span>
+        <button type="button" class="banner-btn" id="banner-demo-consent-go" data-testid="demo-map-consent-go" data-i18n>Load map</button>
+        <button type="button" class="banner-btn" id="banner-demo-consent-cancel" data-i18n>Cancel</button>
+      </div>
+      <div class="banner banner-keys" id="banner-keys" data-testid="keys-banner" hidden>
+        <span id="banner-keys-text" data-i18n>A member's keys changed</span>
+        <button type="button" class="banner-btn" id="banner-keys-open" data-i18n>Check</button>
+      </div>
+      <div class="banner banner-warn" id="banner-offline" hidden>
+        <span class="banner-dot" aria-hidden="true"></span><span data-i18n>Reconnecting...</span>
+      </div>
+      <div class="banner banner-warn" id="banner-insecure" hidden>
+        <span data-i18n>Location needs HTTPS. Open the deployed app or localhost.</span>
+      </div>
+    </div>
+  </div>
+
+  <button type="button" class="fab" id="fab-locate" aria-label="Center the map on me" data-i18n-attr="aria-label">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="7.6"/><path d="M12 1.8v3M12 19.2v3M1.8 12h3M19.2 12h3"/></g></svg>
+  </button>
+
+  <div class="focus-card" id="focus-card" role="region" aria-live="polite" aria-label="Member details" data-i18n-attr="aria-label" hidden></div>
+
+  <div class="sheet" data-testid="sheet" id="sheet">
+    <div class="sheet-drag" id="sheet-drag">
+      <button type="button" class="grabber" aria-label="Expand or collapse the circle sheet" aria-expanded="false" data-i18n-attr="aria-label"></button>
+      <div class="you-card" id="you-card">
+        <div class="ava" id="you-ava"><span class="ava-emoji" id="you-emoji">&#129517;</span></div>
+        <button type="button" class="you-info" id="you-info" data-testid="status-open" aria-label="Set a status for your circle" data-i18n-attr="aria-label">
+          <div class="you-name" id="you-name" dir="auto">You</div>
+          <div class="you-sub" id="you-sub" data-i18n>Not sharing</div>
+        </button>
+        <div class="quick">
+          <button type="button" class="qbtn qbtn-check" data-testid="checkin-button" aria-label="Check in with your circle" data-i18n-attr="aria-label">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="m5 12.5 4.5 4.5L19 7.5"/></svg>
+          </button>
+          <button type="button" class="qbtn qbtn-sos" data-testid="sos-button" aria-label="Hold to send SOS" data-i18n-attr="aria-label">SOS</button>
+        </div>
+      </div>
+      <button type="button" class="share-toggle" data-testid="share-toggle" aria-pressed="false">
+        <span class="share-dot" aria-hidden="true"></span>
+        <span id="share-label" data-i18n>Start sharing</span>
+      </button>
+      <div class="share-window" id="share-window" role="radiogroup" aria-label="Share timer" data-i18n-attr="aria-label" hidden>
+        <span class="share-window-cap" data-i18n>Stop by itself:</span>
+        <button type="button" class="share-window-btn" data-win="0" role="radio" aria-checked="true" data-i18n>never</button>
+        <button type="button" class="share-window-btn" data-win="3600000" role="radio" aria-checked="false">1 h</button>
+        <button type="button" class="share-window-btn" data-win="7200000" role="radio" aria-checked="false">2 h</button>
+        <button type="button" class="share-window-btn" data-win="14400000" role="radio" aria-checked="false">4 h</button>
+      </div>
+      <div class="ava-strip" id="ava-strip" aria-hidden="true"></div>
+    </div>
+    <div class="sheet-body" id="sheet-body">
+      <div id="alerts"></div>
+      <div class="notice notice-warn" id="geo-warn" hidden>
+        <p class="notice-title" data-i18n>Location is blocked</p>
+        <p class="notice-text" data-i18n>Your browser is blocking location for this site. Allow location in your browser's site settings, then tap Start sharing again.</p>
+      </div>
+      <div class="notice notice-sos" id="sos-notice" hidden>
+        <p class="notice-title" data-i18n>SOS is armed</p>
+        <p class="notice-text" data-i18n>Your circle sees an alert at your live position. Tap the check mark above to cancel it and let everyone know you are okay.</p>
+        <button type="button" class="btn btn-primary btn-small" id="sos-help" data-testid="sos-help" hidden data-i18n>Get help from outside your circle</button>
+      </div>
+      <div class="nudge" id="nudge" hidden>
+        <p class="nudge-title" data-i18n>Just you here so far</p>
+        <p class="nudge-text" data-i18n>Starling only gets good when your people are on the map. Send them your invite link.</p>
+        <button type="button" class="btn btn-primary btn-small" id="nudge-invite" data-i18n>Invite your people</button>
+      </div>
+      <div class="sheet-tools">
+        <button type="button" class="tool-btn" id="members-open" data-testid="members-open">
+          <span class="tool-label" data-i18n>People and keys</span>
+          <span class="tool-sub" id="members-tool-sub">Check who you are sharing with</span>
+          <span class="tool-badge" id="members-badge" hidden></span>
+        </button>
+        <button type="button" class="tool-btn" id="places-open" data-testid="places-open">
+          <span class="tool-label" data-i18n>Places</span>
+          <span class="tool-sub" id="places-tool-sub">Get told when your people arrive</span>
+        </button>
+        <button type="button" class="tool-btn" id="timer-open" data-testid="timer-open">
+          <span class="tool-label" data-i18n>Check-in timer</span>
+          <span class="tool-sub" id="timer-tool-sub">Get your circle told if you miss a check-in</span>
+        </button>
+      </div>
+      <div id="member-list"></div>
+      <p class="sheet-foot" data-i18n>End-to-end encrypted. The relay sees ciphertext only.</p>
+    </div>
+  </div>
+</section>
+
+<div id="overlays"></div>
+<div id="toasts" aria-live="polite"></div>
+
+</body>
+</html>

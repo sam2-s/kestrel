@@ -1,0 +1,403 @@
+// App lock: encrypt the circle secret at rest so a stolen or dumped device
+// cannot read it without the passcode or a biometric unlock. The plaintext
+// secret exists only in memory after a successful unlock; on lock it is dropped
+// and only encrypted blobs remain on disk.
+//
+// Wrapped-vault-key model (the pattern password managers use):
+//   K            a random 32-byte vault key, made when lock is first enabled
+//   vaultSecret  the circle secret, AES-GCM encrypted under K
+//   passcode  -> Argon2id -> AES-GCM key that wraps K
+//   biometric -> WebAuthn PRF secret -> HKDF -> AES-GCM key that wraps K
+// Both unlock paths recover the same K, so changing the passcode or adding a
+// biometric only re-wraps K, and rotating the circle only re-encrypts
+// vaultSecret under the K already in memory. No path stores K or the secret in
+// the clear. Wrong passcode or a failed assertion fails AES-GCM authentication
+// and returns null: the GCM tag is the verifier, so there is nothing separate
+// to brute force offline beyond the KDF itself.
+
+import { b64uEncode, b64uDecode } from "./wire.js";
+import { native } from "./env.js";
+import { argon2id, ARGON2_PARAMS, validParams, KdfUnavailableError } from "./argon2.js";
+
+export { ARGON2_PARAMS, KdfUnavailableError };
+
+const subtle = globalThis.crypto.subtle;
+const te = new TextEncoder();
+
+// Records written before 0.16 stretch the passcode with PBKDF2 instead. They
+// still open, and the first successful unlock re-wraps K under Argon2id.
+// This is the OWASP Password Storage Cheat Sheet (2024) floor for
+// PBKDF2-HMAC-SHA256, the cost those records carry.
+export const PBKDF2_ITERS = 600000;
+// Fixed PRF input. The per-credential PRF output is the entropy; this label
+// only namespaces it and must stay stable across versions.
+export const PRF_SALT = te.encode("starling/v1/prf");
+
+export function randomBytes(n) {
+  const b = new Uint8Array(n);
+  globalThis.crypto.getRandomValues(b);
+  return b;
+}
+
+export const newVaultKey = () => randomBytes(32);
+
+// Best-effort scrub of a byte buffer we are done with. WebCrypto gives no
+// guaranteed zeroing; this at least clears the copies we hold.
+export function zero(bytes) {
+  if (bytes && bytes.fill) bytes.fill(0);
+}
+
+async function aesKey(raw, usages) {
+  return subtle.importKey("raw", raw, { name: "AES-GCM" }, false, usages);
+}
+
+async function wrap(wrapKey, plainBytes) {
+  const nonce = randomBytes(12);
+  const ct = new Uint8Array(await subtle.encrypt({ name: "AES-GCM", iv: nonce }, wrapKey, plainBytes));
+  return { nonce, ct };
+}
+
+async function unwrap(wrapKey, nonce, ct) {
+  try {
+    const pt = await subtle.decrypt({ name: "AES-GCM", iv: nonce }, wrapKey, ct);
+    return new Uint8Array(pt);
+  } catch {
+    return null;
+  }
+}
+
+// -------------------------------------------------- secret sealed under vault K
+
+export async function sealUnderVault(vaultKeyBytes, secretBytes) {
+  const k = await aesKey(vaultKeyBytes, ["encrypt"]);
+  const { nonce, ct } = await wrap(k, secretBytes);
+  return { v: 1, nonce, ct };
+}
+
+export async function openUnderVault(vaultKeyBytes, record) {
+  if (!record || !record.nonce || !record.ct) return null;
+  const k = await aesKey(vaultKeyBytes, ["decrypt"]);
+  return unwrap(k, record.nonce, record.ct);
+}
+
+// ------------------------------------------------------------- passcode wrapper
+
+async function pbkdf2WrapKey(passcode, salt, iters) {
+  const base = await subtle.importKey("raw", te.encode(passcode), "PBKDF2", false, ["deriveKey"]);
+  return subtle.deriveKey(
+    { name: "PBKDF2", hash: "SHA-256", salt, iterations: iters },
+    base,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+async function argon2Bits(passcode, salt, params) {
+  const pwd = te.encode(passcode);
+  try {
+    return await argon2id({ password: pwd, salt, t: params.t, m: params.m, p: params.p, outLen: 32 });
+  } finally {
+    zero(pwd);
+  }
+}
+
+async function argon2WrapKey(passcode, salt, params) {
+  const raw = await argon2Bits(passcode, salt, params);
+  try {
+    return await aesKey(raw, ["encrypt", "decrypt"]);
+  } finally {
+    zero(raw);
+  }
+}
+
+// A number as the third argument writes the pre-0.16 PBKDF2 shape with that
+// iteration count, so tests can hold the records older installs carry.
+const legacyIters = (kdf) => (typeof kdf === "number" ? kdf : null);
+
+// Wrap the vault key K with a passcode. Returns the on-disk passcode record.
+export async function makePasscodeRecord(passcode, vaultKeyBytes, kdf = ARGON2_PARAMS) {
+  const salt = randomBytes(16);
+  const iters = legacyIters(kdf);
+  if (iters !== null) {
+    const wrapKey = await pbkdf2WrapKey(passcode, salt, iters);
+    const { nonce, ct } = await wrap(wrapKey, vaultKeyBytes);
+    return { v: 1, kdf: "pbkdf2-sha256", iters, salt, nonce, ct };
+  }
+  if (!validParams(kdf)) throw new RangeError("argon2 parameters out of range");
+  const wrapKey = await argon2WrapKey(passcode, salt, kdf);
+  const { nonce, ct } = await wrap(wrapKey, vaultKeyBytes);
+  return { v: 2, kdf: "argon2id", t: kdf.t, m: kdf.m, p: kdf.p, salt, nonce, ct };
+}
+
+// Returns the unwrapped vault key K, or null on a wrong passcode. A record
+// whose KDF cannot run here throws KdfUnavailableError rather than reading
+// as a wrong passcode: that is a device problem, and the lock screen says so.
+export async function openPasscodeRecord(record, passcode) {
+  if (!record || !(record.salt instanceof Uint8Array)) return null;
+  if (record.kdf === "pbkdf2-sha256") {
+    if (!Number.isInteger(record.iters) || record.iters < 1) return null;
+    const wrapKey = await pbkdf2WrapKey(passcode, record.salt, record.iters);
+    return unwrap(wrapKey, record.nonce, record.ct);
+  }
+  if (record.kdf === "argon2id") {
+    if (!validParams(record)) return null;
+    const wrapKey = await argon2WrapKey(passcode, record.salt, record);
+    return unwrap(wrapKey, record.nonce, record.ct);
+  }
+  return null;
+}
+
+// True when an unlock should re-wrap K under today's KDF: a PBKDF2 record
+// from before 0.16, or an Argon2id record below the current cost.
+export function passcodeNeedsRewrap(record) {
+  if (!record) return false;
+  if (record.kdf !== "argon2id") return true;
+  return record.t < ARGON2_PARAMS.t || record.m < ARGON2_PARAMS.m;
+}
+
+// -------------------------------------------------------------- duress verifier
+// A duress passcode never unlocks anything, so unlike the real passcode it
+// cannot use the GCM tag of a wrapped key as its verifier; it stores an
+// Argon2id hash instead. That record sits on disk in the clear, which means a forensic
+// look at storage can tell a duress code EXISTS. It cannot tell what it is,
+// and someone watching a passcode being typed cannot tell the two apart, which
+// is the property the feature is for. The threat model states this honestly.
+
+export async function makeDuressRecord(passcode, kdf = ARGON2_PARAMS) {
+  const salt = randomBytes(16);
+  const iters = legacyIters(kdf);
+  if (iters !== null) {
+    const base = await subtle.importKey("raw", te.encode(passcode), "PBKDF2", false, ["deriveBits"]);
+    const bits = new Uint8Array(
+      await subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations: iters }, base, 256),
+    );
+    return { v: 1, kdf: "pbkdf2-sha256", iters, salt, hash: bits };
+  }
+  if (!validParams(kdf)) throw new RangeError("argon2 parameters out of range");
+  const hash = await argon2Bits(passcode, salt, kdf);
+  return { v: 2, kdf: "argon2id", t: kdf.t, m: kdf.m, p: kdf.p, salt, hash };
+}
+
+export async function matchesDuress(record, passcode) {
+  if (!record || !(record.hash instanceof Uint8Array) || !(record.salt instanceof Uint8Array)) return false;
+  let bits;
+  if (record.kdf === "pbkdf2-sha256") {
+    if (!Number.isInteger(record.iters) || record.iters < 1) return false;
+    const base = await subtle.importKey("raw", te.encode(passcode), "PBKDF2", false, ["deriveBits"]);
+    bits = new Uint8Array(
+      await subtle.deriveBits(
+        { name: "PBKDF2", hash: "SHA-256", salt: record.salt, iterations: record.iters },
+        base,
+        256,
+      ),
+    );
+  } else if (record.kdf === "argon2id") {
+    if (!validParams(record)) return false;
+    bits = await argon2Bits(passcode, record.salt, record);
+  } else {
+    return false;
+  }
+  if (bits.length !== record.hash.length) return false;
+  let diff = 0;
+  for (let i = 0; i < bits.length; i++) diff |= bits[i] ^ record.hash[i];
+  zero(bits);
+  return diff === 0;
+}
+
+// ------------------------------------------------------------ biometric wrapper
+// WebAuthn PRF: a platform authenticator (Face ID / Touch ID / fingerprint /
+// Windows Hello) mints a stable per-credential secret gated behind the user's
+// biometric. That secret (HKDF-stretched) wraps a copy of K. This is real
+// cryptography, not a presence check: with no PRF output there is no wrap key,
+// so we only ever offer biometrics when PRF actually produces bytes.
+
+const rpId = () => location.hostname;
+
+export function webauthnAvailable() {
+  // The wrapper never uses WebAuthn: its WebView cannot mint PRF output, so
+  // the Keystore path below is the only biometric wrap offered there.
+  if (native()) return false;
+  return !!(globalThis.PublicKeyCredential && globalThis.navigator?.credentials?.create);
+}
+
+export async function platformAuthenticatorAvailable() {
+  if (!webauthnAvailable()) return false;
+  try {
+    return await globalThis.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+  } catch {
+    return false;
+  }
+}
+
+// One biometric answer for the settings sheet, whatever the platform path is.
+export async function bioAvailable() {
+  const n = native();
+  if (n) {
+    try {
+      return !!n.bioSupported();
+    } catch {
+      return false;
+    }
+  }
+  return platformAuthenticatorAvailable();
+}
+
+// --------------------------------------------------- android keystore wrapper
+// The wrapper's bridge holds an AES-GCM key in the Android Keystore that the
+// OS only unseals after a biometric prompt; it wraps K the same way the PRF
+// path does. addJavascriptInterface cannot return async values, so results
+// come back through a token on a global callback.
+
+const BIO_TIMEOUT_MS = 90000;
+let bioTokenN = 0;
+const bioPending = new Map();
+
+globalThis.__starlingBio = (token, payload) => {
+  const p = bioPending.get(token);
+  if (!p) return;
+  bioPending.delete(token);
+  clearTimeout(p.timer);
+  p.resolve(payload ?? null);
+};
+
+function bridgeCall(fn) {
+  return new Promise((resolve) => {
+    const token = `b${++bioTokenN}`;
+    const timer = setTimeout(() => {
+      bioPending.delete(token);
+      resolve(null);
+    }, BIO_TIMEOUT_MS);
+    bioPending.set(token, { resolve, timer });
+    try {
+      fn(token);
+    } catch {
+      bioPending.delete(token);
+      clearTimeout(timer);
+      resolve(null);
+    }
+  });
+}
+
+async function makeKeystoreRecord(n, vaultKeyBytes) {
+  const b64 = b64uEncode(vaultKeyBytes);
+  const res = await bridgeCall((token) => n.bioWrap(b64, token));
+  if (typeof res !== "string") return null;
+  let obj;
+  try {
+    obj = JSON.parse(res);
+  } catch {
+    return null;
+  }
+  if (typeof obj?.nonce !== "string" || typeof obj?.ct !== "string") return null;
+  try {
+    return { v: 1, kind: "android-keystore", nonce: b64uDecode(obj.nonce), ct: b64uDecode(obj.ct) };
+  } catch {
+    return null;
+  }
+}
+
+async function openKeystoreRecord(record) {
+  const n = native();
+  if (!n) return null;
+  const nonce = b64uEncode(record.nonce);
+  const ct = b64uEncode(record.ct);
+  const res = await bridgeCall((token) => n.bioUnwrap(nonce, ct, token));
+  if (typeof res !== "string") return null;
+  let key;
+  try {
+    key = b64uDecode(res);
+  } catch {
+    return null;
+  }
+  return key.length === 32 ? key : null;
+}
+
+async function evalPrf(credentialId) {
+  const assertion = await navigator.credentials.get({
+    publicKey: {
+      challenge: randomBytes(32),
+      rpId: rpId(),
+      userVerification: "required",
+      allowCredentials: [{ type: "public-key", id: credentialId }],
+      extensions: { prf: { eval: { first: PRF_SALT } } },
+      timeout: 60000,
+    },
+  });
+  const res = assertion?.getClientExtensionResults?.().prf?.results?.first;
+  return res ? new Uint8Array(res) : null;
+}
+
+async function prfWrapKey(prfSecret) {
+  const base = await subtle.importKey("raw", prfSecret, "HKDF", false, ["deriveKey"]);
+  return subtle.deriveKey(
+    { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: te.encode("starling/v1/bio-wrap") },
+    base,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+// Enroll a biometric: create a discoverable platform credential, mint its PRF
+// output, and wrap K with it. Returns the on-disk bio record, or null if the
+// device or browser does not actually produce PRF output (honest fallback).
+export async function makeBioRecord(vaultKeyBytes) {
+  const n = native();
+  if (n) return makeKeystoreRecord(n, vaultKeyBytes);
+  if (!webauthnAvailable()) return null;
+  let cred;
+  try {
+    cred = await navigator.credentials.create({
+      publicKey: {
+        challenge: randomBytes(32),
+        rp: { name: "Starling", id: rpId() },
+        user: { id: randomBytes(16), name: "starling", displayName: "Starling" },
+        pubKeyCredParams: [
+          { type: "public-key", alg: -7 },
+          { type: "public-key", alg: -257 },
+        ],
+        authenticatorSelection: {
+          authenticatorAttachment: "platform",
+          residentKey: "required",
+          userVerification: "required",
+        },
+        extensions: { prf: {} },
+        timeout: 60000,
+      },
+    });
+  } catch {
+    return null;
+  }
+  if (!cred) return null;
+  const credentialId = new Uint8Array(cred.rawId);
+  // PRF-on-create is unreliable across authenticators; a follow-up get() is the
+  // dependable way to actually obtain the bytes.
+  let prfSecret;
+  try {
+    prfSecret = await evalPrf(credentialId);
+  } catch {
+    return null;
+  }
+  if (!prfSecret) return null;
+  const wrapKey = await prfWrapKey(prfSecret);
+  zero(prfSecret);
+  const { nonce, ct } = await wrap(wrapKey, vaultKeyBytes);
+  return { v: 1, credentialId, nonce, ct };
+}
+
+// Unlock with biometrics: returns the vault key K, or null on failure.
+export async function openBioRecord(record) {
+  if (record?.kind === "android-keystore") return openKeystoreRecord(record);
+  if (!record || !record.credentialId) return null;
+  let prfSecret;
+  try {
+    prfSecret = await evalPrf(record.credentialId);
+  } catch {
+    return null;
+  }
+  if (!prfSecret) return null;
+  const wrapKey = await prfWrapKey(prfSecret);
+  zero(prfSecret);
+  return unwrap(wrapKey, record.nonce, record.ct);
+}

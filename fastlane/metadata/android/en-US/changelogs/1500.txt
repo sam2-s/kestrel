@@ -1,0 +1,1 @@
+Runs on Android 9. The first time it opens there, it says once that Android 9 has had no security fixes since January 2022, and that its location permission covers all the time. With an Android System WebView older than 137, it says which version it needs instead of loading.

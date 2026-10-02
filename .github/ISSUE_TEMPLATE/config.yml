@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question
+    url: https://github.com/munzzyy/starling/discussions/categories/q-a
+    about: Ask how something works or whether Starling can do something. Bugs and feature requests stay here as issues.
+  - name: Security vulnerability
+    url: https://github.com/munzzyy/starling/security/policy
+    about: Please report security issues privately by email, not as a public issue.

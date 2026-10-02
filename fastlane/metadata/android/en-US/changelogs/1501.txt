@@ -1,0 +1,1 @@
+Your own server takes an optional tracker ID, sent as tid with each position, so colota-forwarder routes it and Home Assistant names the device.

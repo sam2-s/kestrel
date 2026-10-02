@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Starling</string>
+    <string name="notif_channel">Location sharing</string>
+    <string name="notif_events_channel">Circle alerts</string>
+    <string name="notif_sos_channel">Emergency alerts</string>
+    <string name="notif_sos_text">Open Starling now.</string>
+    <string name="notif_title">Sharing with your circle</string>
+    <string name="notif_text_forward">Also sending to %1$s. Tap Stop to end it.</string>
+    <string name="notif_text">Tap Stop to end it.</string>
+    <string name="notif_swiped_title">Sharing stopped</string>
+    <string name="notif_swiped_text">Starling was closed. Open it again to keep sharing.</string>
+    <string name="notif_location_off">Location is off on this phone. Turn it on to keep sharing.</string>
+    <string name="notif_locked_text">Open Starling to see what happened.</string>
+    <string name="notif_remind_title">Sharing is off</string>
+    <string name="notif_remind_text">Open Starling to share again.</string>
+    <string name="notif_stop">Stop</string>
+    <string name="bio_wrap_title">Confirm to set up biometric unlock</string>
+    <string name="bio_unwrap_title">Unlock Starling</string>
+    <string name="bio_cancel">Use passcode</string>
+    <string name="panic_connect_title">Panic button</string>
+    <string name="panic_connect_text">Allow %1$s to trigger Starling\'s panic wipe? A trigger erases the circle secret, your identity, and every trace of Starling on this device, immediately and without asking. There is no undo.</string>
+    <string name="panic_allow">Allow panic wipe</string>
+    <string name="panic_deny">Don\'t allow</string>
+    <string name="panic_unknown_app">this app</string>
+    <string name="webview_title">Update Android System WebView</string>
+    <string name="webview_too_old">Starling runs inside Android System WebView and needs version %1$d or newer. This phone has version %2$d.\n\nUpdate Android System WebView (on some phones it comes with Chrome) from your app store, or install your phone\'s latest system update, then open Starling again.</string>
+    <string name="webview_missing">Starling runs inside Android System WebView, and this phone doesn\'t have a working one. It may be turned off in your phone\'s app settings, or it may need an update from your app store.</string>
+    <string name="android9_title">This phone runs Android 9</string>
+    <string name="android9_body">Google\'s last security fixes for Android 9 came out in January 2022. Starling works here, but holes in Android found since then stay open on this phone, and a harmful app or website could use one to follow your location.\n\nAndroid 9 also can\'t limit location to \"only while using the app\", so the permission covers all the time. Starling only reads your location while you\'re using it or sharing.\n\nIf you can, use a newer phone.</string>
+</resources>

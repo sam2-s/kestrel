@@ -1,0 +1,3 @@
+#ifndef STARLING_SHIM_STDIO_H
+#define STARLING_SHIM_STDIO_H
+#endif

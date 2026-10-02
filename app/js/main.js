@@ -1,0 +1,7055 @@
+// App orchestration: boot, screens, sharing, demo, settings. State lives here;
+// components live in ui.js, protocol I/O in net.js, map in map.js.
+
+import {
+  parseInviteFragment,
+  newSeed,
+  newInviteSecret,
+  deriveInviteChannelId,
+  deriveInviteKey,
+  generateIdentity,
+  generateEphemeral,
+  inviteFragment,
+  inviterCommitment,
+  openMessage,
+  sealTo,
+} from "./crypto.js";
+import { openGeneration, buildRekey, applyRekey, rosterAgrees } from "./rekey.js";
+import {
+  admissionCheck,
+  inviteMintedBy,
+  inviteWatchDecision,
+  joinPromptVerdict,
+  joinRelayVerdict,
+  mintDecision,
+  recordOverflows,
+  screenJoinRequest,
+  screenWelcomeMessage,
+  slotFailure,
+  undoAdmission,
+  welcomePlan,
+  welcomeRoster,
+  welcomeVerdict,
+} from "./joinflow.js";
+import {
+  assembleWelcome,
+  circleControl,
+  inviterMatches,
+  welcomeContext,
+} from "./membership.js";
+// The roster and pinning decisions: who may be pinned and in what form, what
+// a key change is, when a roster disagreement is real, and who a re-key wraps
+// to. Verdicts only, so the awaits and the writes below stay here.
+import {
+  acceptedKeyChange,
+  admitPinned,
+  canonKey,
+  canonPinned,
+  describeKeyChange,
+  genRosterFrom,
+  keyChangeVerdict,
+  pendingAfterRekey,
+  pinnedFromRecipients,
+  reconcileVerdict,
+  rekeyRecipients,
+  rosterAfterRekey,
+  sameKey,
+  safetyQrText,
+  checkSafetyQr,
+  parseSafetyQr,
+} from "./roster.js";
+import { createRatchet, epochAt, HISTORY_CHOICES, DEFAULT_HISTORY_EPOCHS } from "./ratchet.js";
+import {
+  INVITE_TTL_MS,
+  MAX_SKEW_EPOCHS,
+  MEMBER_CAP,
+  EPOCH_MS,
+  algFromPk,
+  epochPlausible,
+  b64uDecode,
+  b64uEncode,
+  memberIdFromKeys,
+  safetyNumber,
+  sigBase,
+  verifySig,
+} from "./wire.js";
+import {
+  canPromptInstall,
+  canShareInBackground,
+  createForegroundSession,
+  isIOS,
+  isIOSSafari,
+  isInstalled,
+  promptInstall,
+} from "./platform.js";
+import { qrSvg } from "./qr.js";
+import { decode as decodeQr } from "./qrscan.js";
+import { dbGet, dbSet, dbDel, wipeAll, persistenceBroken } from "./store.js";
+// The at-rest, lock and destruct decisions: may this be written and under
+// which key, what an unlock attempt just found, what this launch found, and
+// the order a circle erases itself in. Verdicts and one plan, so every await
+// and every write below stays here.
+import { atRestForm, bootVerdict, slotsVerdict, unlockVerdict } from "./atrest.js";
+import {
+  newVaultKey,
+  makePasscodeRecord,
+  openPasscodeRecord,
+  makeBioRecord,
+  openBioRecord,
+  makeDuressRecord,
+  matchesDuress,
+  passcodeNeedsRewrap,
+  KdfUnavailableError,
+  sealUnderVault,
+  openUnderVault,
+  bioAvailable,
+  zero,
+} from "./lock.js";
+import { createPlaceTracker, sanitizePlaces, newPlaceId, fenceSnap, announces, DEFAULT_RADIUS } from "./places.js";
+import { DUE_GRACE_MS, DUE_WARN_MS, overdue, storedTimer, warnDue } from "./checkin.js";
+import { debugHooks, apiUrl, customRelayInUse, isWrapped, isBundled, native, pageShown, shareUrlBase, normalizeRelay, normalizeForward, normalizeForwardTid, setApiBase, shareCapable } from "./env.js";
+import {
+  isSealedRecordError,
+  GEN_SLOT,
+  PINNED_SLOT,
+  INVITE_SLOT,
+  STAGED_SLOT,
+  SEALED_KEYS,
+  writeCirclesAtRest,
+  readCirclesAtRest,
+  writeRecordAtRest,
+  readRecordAtRest,
+  packGenMeta,
+  readGenMeta,
+  packPinned,
+  pinnedMap,
+  packInvite,
+  readInvite,
+  packStagedGen,
+  readStagedGen,
+  switchActive,
+  leaveActive,
+  packShare,
+  readCadence,
+  finishPendingLeave,
+  reconcileCircles,
+  adoptPairedCircle,
+  enableLockTransition,
+  disableLockTransition,
+} from "./circles.js";
+import * as ui from "./ui.js";
+import { createMapView } from "./map.js";
+import { createPoller, createRoster, createSender, statusOf, displayStatus, sortMembers, staleAfter } from "./net.js";
+import { createOutbox } from "./outbox.js";
+import { buildDataExport } from "./export.js";
+import { startBeacon } from "./helpsession.js";
+import { startWatch, batteryLevel } from "./geo.js";
+import { haversineMeters, coarsePos, hueFromMemberId, fmtRelTime, fmtClock } from "./fmt.js";
+import { parseHealth, shareProblems, sentNote, noteAfter, sendErrorKind, shareReport } from "./sharehealth.js";
+import { VERSION } from "./version.js";
+import { createDemo, demoPlaces, DEMO_CENTER } from "./demo.js";
+import { t, translateDom, loadLocale, setLocale, resolveLocale, LOCALE_CHOICES } from "./i18n.js";
+
+// Error collector so automated checks can read back anything that went wrong.
+window.__starlingErrors = [];
+
+// The wrapper's one way to say something human to the page (an Orbot that
+// never answered, for instance). Bundled app code only; it becomes a toast.
+window.__starlingNotice = (message, kind) => {
+  if (typeof message === "string" && message) ui.toast(message.slice(0, 200), kind === "info" ? "info" : "warn");
+};
+window.addEventListener("error", (e) => {
+  window.__starlingErrors.push(String(e.message || e.error || "error"));
+});
+window.addEventListener("unhandledrejection", (e) => {
+  window.__starlingErrors.push(`unhandled: ${String(e.reason)}`);
+});
+
+const $ = ui.$;
+const byTestid = (id) => document.querySelector(`[data-testid="${id}"]`);
+const te = new TextEncoder();
+
+const state = {
+  screen: "onboarding",
+  demo: false,
+  sharing: false,
+  sosActive: false,
+  // { route, at } once the native side reports a share stopped from the
+  // notification or a task swipe, neither of which this page necessarily saw
+  // happen. Read at boot, cleared only when the person acknowledges it.
+  stopRecord: null,
+  // The live generation: { g, e0, channelId, ratchet }. Everything that used to
+  // hang off a circle secret that lived forever hangs off this instead, and a
+  // re-key replaces the whole of it.
+  gen: null,
+  // memberId -> { alg, pk, epk, verified, name }. Who this device believes is
+  // in the circle, and which keys each of them is.
+  pinned: new Map(),
+  // The subset of that roster which may re-key: the members this generation
+  // opened with. See onControl for why first sight is not enough.
+  genRoster: new Set(),
+  // { secret, commit, by, createdAt, expiresAt } while an invitation is out.
+  // `by` is the identity that minted it, so a credential can never outlive the
+  // circle it belongs to.
+  invite: null,
+  identity: null,
+  profile: null,
+  settings: {
+    precision: "precise",
+    trail: true,
+    basemap: "dark",
+    theme: "dark",
+    wakeLock: false,
+    history: "default", // an id from ratchet.js HISTORY_CHOICES
+    steady: false, // post on a fixed cadence whether or not you have moved
+    lang: "auto", // UI language; "auto" follows the system, English is the source
+    placeAlerts: true, // say when a member arrives at or leaves a saved place
+    batAlerts: true, // say when a member's battery runs low
+    shareReminder: 0, // ms after a stop you chose before the phone says sharing is off; 0 is never
+  },
+  // Named spots that live only on this device; never sent anywhere. Loaded by
+  // loadPlaces() under the same at-rest rule as the chain key.
+  places: [],
+  circleName: "My circle",
+  // The active circle's own precision and cadence; null means it has none and
+  // the device-wide setting (or the 15 second floor) stands in.
+  circleShare: { precision: null, cadence: null },
+  me: null,
+  geoDenied: false,
+  geoFailed: false,
+  netStatus: "idle",
+  offline: !navigator.onLine,
+  locked: false,
+  lock: null, // { enabled, autolockMs, pass, bio } when app lock is on
+  vaultKey: null, // 32 bytes in memory only while unlocked
+  relay: "", // custom relay URL; "" means the default
+  circles: [], // inactive circles, in memory only while unlocked
+  // Things a person has to be told about rather than have reconciled behind
+  // their back. Stage 2 draws these; nothing here resolves itself.
+  keyChanges: new Map(), // memberId -> the keys presented instead of the pinned pair
+  rosterMismatch: null, // { by } when a re-key disagreed about who is in the circle
+  // A disagreement that has not been surfaced yet, because the likeliest cause
+  // is a member who was just admitted and has not posted anything. It becomes
+  // rosterMismatch only if it fails to resolve. See reconcileRoster.
+  rosterPending: null,
+  // The person whose link this device joined on, and their safety number, so
+  // the joiner can check the number of whoever let them in.
+  joinedVia: null,
+  // A welcome that arrived without all of its member records. This device
+  // cannot follow a re-key it cannot attribute, so it says so instead.
+  joinIncomplete: null,
+  missedRekey: false, // a re-key landed for a generation this device cannot reach
+  // The ratchet destroyed itself: this device was off past the catch-up cap,
+  // so it holds no key this circle still uses and cannot be given one.
+  chainDestroyed: false,
+  // The same thing, found at the next unlock rather than while the app was
+  // open: { at }. A circle went away without the user doing anything, and they
+  // are on a different one now, so it is said out loud rather than left to be
+  // noticed.
+  chainWiped: null,
+  // Set when the destruct could not erase the circle from disk. The keys are
+  // out of memory either way; this says the storage half did not happen.
+  chainWipeFailed: null,
+  clockError: null, // { skewMs, at } when the relay refused our epoch
+  retired: false, // the relay answered 410: this build can no longer connect
+  v1Data: false, // storage written by a v1 client, which cannot be carried over
+  joinRequests: [], // join requests waiting on our invite channel
+  joining: null, // { status, since } while this device waits to be let in
+  foreground: null, // { active, elapsedMs, wakeLock } where sharing needs the screen on
+  // A re-key somebody else made. A toast is gone in three seconds, and "your
+  // circle's keys changed" is not a three-second fact, so it stays until it is
+  // read: { byName, removedNames, at }.
+  lastRekey: null,
+  installDismissed: false, // the home-screen nudge was answered
+};
+
+// The kv face circles.js writes through, and the lock context it needs to
+// decide sealed versus plaintext at rest.
+const kv = { get: dbGet, set: dbSet, del: dbDel };
+const lockCtx = () =>
+  state.lock?.enabled ? { enabled: true, vaultKey: state.vaultKey } : null;
+const persistCirclesAtRest = () => writeCirclesAtRest(kv, lockCtx(), state.circles);
+
+const channelId = () => state.gen?.channelId || null;
+const historyEpochs = (id = state.settings.history) =>
+  HISTORY_CHOICES.find((c) => c.id === id)?.epochs ?? DEFAULT_HISTORY_EPOCHS;
+
+// What the active circle shares. settings.precision is the pre-circle
+// default and still stands in for a circle that never chose its own.
+const activePrecision = () => state.circleShare.precision || state.settings.precision;
+const activeCadence = () => readCadence(state.circleShare.cadence) || 15;
+// An SOS goes out on the floor whatever the circle asked for.
+const cadenceS = () => (state.sosActive ? 15 : activeCadence());
+const cadenceMs = () => cadenceS() * 1000;
+
+// The generation as it goes to disk: the oldest chain key still retained, plus
+// the numbers and the channel that key alone cannot name.
+function genRecord() {
+  const snap = state.gen.ratchet.snapshot();
+  if (!snap) throw new Error("no chain key to persist");
+  return {
+    g: state.gen.g,
+    e0: state.gen.e0,
+    ckEpoch: snap.e0,
+    channelId: state.gen.channelId,
+    at: state.gen.at || 0,
+    genRoster: [...state.genRoster],
+    ck: snap.ck0,
+  };
+}
+
+// The active circle as a storable record, for stashing before a switch.
+async function activeRecord() {
+  const rec = genRecord();
+  return {
+    name: state.circleName,
+    secret: rec.ck,
+    identity: state.identity,
+    g: rec.g,
+    e0: rec.e0,
+    ckEpoch: rec.ckEpoch,
+    channelId: rec.channelId,
+    at: rec.at,
+    genRoster: rec.genRoster,
+    pinned: packPinned(state.pinned),
+    profile: state.profile,
+    lastTs: (await dbGet("lastSentTs")) || 0,
+    ...packShare(state.circleShare),
+  };
+}
+
+let roster = null;
+let poller = null;
+let sender = null;
+
+// The generation this device just left, kept readable for a short while.
+//
+// Two members who re-key the same generation in the same minute each open a
+// g+1 of their own. Without this, neither ever sees the other's wraps, because
+// moving tears the poller down, and the circle splits across two channels with
+// nobody told. So the old generation and the channel it lived on stay open for
+// REKEY_GRACE_MS, long enough for the competing wrap to arrive and be judged.
+//
+// It holds the roster as it was before the move, not as it is now: adopting
+// the winner has to start from the generation both rotators worked from, or
+// the roster maths runs against the loser's idea of the circle.
+let grace = null;
+let graceRoster = null;
+let gracePoller = null;
+let graceTimer = 0;
+
+// The RAM-only retry line for bye, checkin and SOS: the three one-shot
+// messages whose silent loss lies to the circle. It re-seals through
+// sendMsg on every attempt and holds no storage by construction; lockNow,
+// the wipe reload and circle switches clear it.
+const outbox = createOutbox({
+  send: async (type) => {
+    if (state.demo || !sender) throw new Error("no sender");
+    await sendMsg(type);
+  },
+  onSettle: (type, ok, _err, tries) => {
+    // Only a RECOVERED delivery says anything: the first attempt's caller
+    // already spoke, and quiet retries should stay quiet.
+    if (!ok || tries < 1) return;
+    if (type === "bye") {
+      ui.toast(t("Your circle now sees you stopped sharing."));
+    } else if (type === "checkin") {
+      state.sosActive = false;
+      endBeacon().catch(() => {});
+      ui.toast(t("Check-in delivered. Your circle sees it now."));
+      mapView?.pulse("me");
+    } else if (type === "sos") {
+      ui.toast(t("SOS delivered to your circle."), "sos");
+    }
+    render();
+  },
+});
+// The invite-channel loops: one on the inviting side watching for join
+// requests, one on the joining side waiting for a welcome. Both are plain stop
+// functions, and both are memory only.
+let invitePoll = null;
+let joinPoll = null;
+let rekeyTimer = 0;
+// The foreground session that keeps sharing alive where there is no background
+// execution to lean on (see platform.js).
+let foreground = null;
+// The beacon viewer the SOS flow mints, so the help sheet has a link to show.
+let sosViewer = null;
+// Viewer links, keyed by viewer id, memory only. beacon.list() deliberately
+// does not carry them: a link is handed back once, at mint time, and this is
+// the only place it is kept so the help sheet can show each one again.
+const beaconLinks = new Map();
+// The chain-key epoch already on disk, so the ratchet is only rewritten when
+// it has actually moved.
+let storedCkEpoch = -1;
+// The live emergency beacon, if an SOS is running. Memory only by design:
+// it must not outlive the process that can also cancel it.
+let beacon = null;
+let mapView = null;
+let sheet = null;
+let demo = null;
+let demoMembers = [];
+// The demo's own basemap switch. It starts off-grid every time; real tiles
+// load only after the consent banner is accepted, and the choice is never
+// persisted - the next demo starts off-grid again.
+let demoMapOn = false;
+let demoMapAsk = false;
+let focusedId = null;
+let focusTrailOn = false;
+let stopGeo = null;
+let shareTimer = 0;
+let lastSentPos = null;
+let wakeLock = null;
+// One post in flight, the newest position behind it. A backlog of one post per
+// fix went out in a burst whenever a held-up page came back.
+let sendBusy = 0;
+let sendAgain = false;
+// A post asked for between generations, sent on the next sender.
+let sendWhenReady = false;
+// Counts and times only.
+let shareStats = { startedAt: 0, ok: 0, failed: 0, lastOkAt: 0, lastErr: "", lastErrAt: 0 };
+let locationPaused = null;
+// Settings cards waved off for this share.
+const healthDismissed = new Set();
+const prevStatus = new Map();
+// The whole-circle-silent card, dismissed for this session once acknowledged.
+const QUIET_CHANNEL_MS = 45 * 60 * 1000;
+let quietDismissed = false;
+// Arrive/leave tracking against the device's saved places, plus which members
+// have already been called out for a low battery. Memory only, like prevStatus.
+const placeTracker = createPlaceTracker();
+const batWarned = new Set();
+// Per member, cleared when their next SOS starts.
+const sosQuietTold = new Set();
+const sosCardHidden = new Set();
+// The tracker key for this device's own position. Member ids are 32 hex chars,
+// so this can never collide with one.
+const SELF_KEY = "self";
+
+// Cleared together wherever the member set changes out from under the alert
+// loop: circle switch, leave, demo enter and exit, re-key adoption.
+function resetMemberAlerts() {
+  prevStatus.clear();
+  placeTracker.clear();
+  batWarned.clear();
+}
+
+const insecureContext =
+  !window.isSecureContext && !["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+
+// Sheets that draw live state and have to follow it while they are open: a
+// join request lands, a member's keys change, a help link runs down. Each one
+// registers here and is refreshed from render().
+const liveSheets = new Set();
+function keepLive(make) {
+  const sheet = make(() => liveSheets.delete(sheet));
+  liveSheets.add(sheet);
+  return sheet;
+}
+
+const members = () => (state.demo ? demoMembers : roster ? roster.list() : []);
+// Who a member id belongs to, in the words a person would use. The live roster
+// name is the one they are posting under; the pinned name is what they were
+// called when we pinned them, and is all that is left after they are removed.
+const displayName = (id, fallback = "A member") =>
+  members().find((r) => r.id === id)?.name || state.pinned.get(id)?.name || fallback;
+const myHue = () => (state.identity ? hueFromMemberId(state.identity.memberId) : 205);
+
+// ------------------------------------------------------------------ theme
+
+const mqLight = matchMedia("(prefers-color-scheme: light)");
+// The wrapper's WebView settles prefers-color-scheme when it is built, so there the bridge answers.
+function systemLight() {
+  try {
+    const n = native();
+    if (typeof n?.systemDark === "function") return !n.systemDark();
+  } catch {
+    // an older wrapper
+  }
+  return mqLight.matches;
+}
+function resolvedTheme() {
+  const t = state.settings.theme;
+  return t === "auto" ? (systemLight() ? "light" : "dark") : t;
+}
+function applyTheme() {
+  const t = resolvedTheme();
+  document.documentElement.dataset.theme = t;
+  // Match the browser chrome (status bar, address bar) to the active theme.
+  const bar = document.querySelector('meta[name="theme-color"]');
+  if (bar) bar.setAttribute("content", t === "light" ? "#f4f6fb" : "#0a0d14");
+  // The wrapper has no theme-color; its bar icons have to be told.
+  try {
+    native()?.setBarsLight?.(t === "light");
+  } catch {
+    // an older wrapper without the method
+  }
+}
+const onSchemeChange = () => {
+  if (state.settings.theme === "auto") applyTheme();
+};
+globalThis.__starlingScheme = onSchemeChange;
+// Safari < 14 only has the legacy MediaQueryList.addListener.
+if (mqLight.addEventListener) mqLight.addEventListener("change", onSchemeChange);
+else if (mqLight.addListener) mqLight.addListener(onSchemeChange);
+
+// ------------------------------------------------------------ debug hook
+
+if (debugHooks()) window.__starlingState = () => {
+  const now = Date.now();
+  return {
+    screen: state.screen,
+    sharing: !!state.sharing,
+    demo: !!state.demo,
+    locked: !!state.locked,
+    lockEnabled: !!state.lock?.enabled,
+    circles: state.circles.length,
+    hasBio: !!state.lock?.bio,
+    sosActive: !!state.sosActive,
+    beacon: !!beacon,
+    channel: channelId(),
+    g: state.gen?.g ?? null,
+    pinned: state.pinned.size,
+    keyChanges: [...state.keyChanges.keys()],
+    joinRequests: state.joinRequests.length,
+    joining: state.joining?.status || null,
+    joinIncomplete: !!state.joinIncomplete,
+    genRoster: [...state.genRoster],
+    invite: !!state.invite,
+    clockError: !!state.clockError,
+    chainDestroyed: !!state.chainDestroyed,
+    retired: !!state.retired,
+    checkinDue: timerDue(),
+    members: sortMembers(members(), now).map((r) => ({
+      id: r.id,
+      name: r.name ?? null,
+      lat: Number.isFinite(r.lat) ? r.lat : null,
+      lon: Number.isFinite(r.lon) ? r.lon : null,
+      ts: r.ts ?? null,
+      type: r.type ?? null,
+      stale: now - r.ts > staleAfter(r),
+      status: displayStatus(r, now),
+      due: r.due ?? null,
+    })),
+    me:
+      state.identity || state.demo
+        ? {
+            id: state.identity?.memberId || "demo",
+            name: state.profile?.name || t("You"),
+            lat: state.me?.lat ?? null,
+            lon: state.me?.lon ?? null,
+          }
+        : null,
+  };
+};
+
+// Debug hook: frame everyone with a position, like the demo's opening shot.
+if (debugHooks()) window.__starlingFit = () => {
+  if (!mapView) return false;
+  const pts = members().filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lon));
+  if (state.me && Number.isFinite(state.me.lat)) pts.push({ lat: state.me.lat, lon: state.me.lon });
+  if (!pts.length) return false;
+  mapView.fitAll(pts);
+  return true;
+};
+
+// --------------------------------------------------------------- screens
+
+function showScreen(name) {
+  const was = state.screen;
+  state.screen = name;
+  // A pending map-tap pick must not outlive the map screen it was armed on:
+  // an unlock, a wipe, or a circle change later, a stray tap would still add
+  // a place under whatever name was typed before the world changed.
+  if (name !== "map") mapView?.cancelPick();
+  $("#screen-lock").hidden = name !== "lock";
+  $("#screen-onboarding").hidden = name !== "onboarding";
+  $("#screen-map").hidden = name !== "map";
+  const notice = document.getElementById("screen-notice");
+  if (notice) notice.hidden = name !== "notice";
+  // Entrance rise on a real screen change only: re-showing the same screen
+  // (every render pass does) must not replay it. One-shot, removed on end,
+  // so it can never stack with itself.
+  if (was && was !== name) {
+    const el = document.getElementById(`screen-${name}`);
+    if (el && typeof el.classList?.add === "function") {
+      el.classList.remove("screen-enter");
+      el.classList.add("screen-enter");
+      el.addEventListener("animationend", () => el.classList.remove("screen-enter"), { once: true });
+    }
+  }
+  ensureWakeLock();
+}
+
+// A full-screen dead end for the two states there is no way back from inside
+// the app: storage this build cannot read, and a relay that has retired the
+// protocol this build speaks. Built here rather than in the page so it can say
+// exactly what happened; stage 2 owns how it looks.
+function showNotice({ title, body, actions = [] }) {
+  let notice = document.getElementById("screen-notice");
+  if (!notice) {
+    notice = document.createElement("section");
+    notice.id = "screen-notice";
+    notice.className = "screen";
+    notice.dataset.testid = "notice-screen";
+    const wrap = ui.el("div", "ob-wrap");
+    const hero = ui.el("div", "ob-hero");
+    hero.append(ui.el("h1", "ob-wordmark", "starling"));
+    hero.append(ui.el("p", "ob-tagline"));
+    wrap.append(hero);
+    wrap.append(ui.el("div", "ob-actions"));
+    notice.append(wrap);
+    document.body.append(notice);
+  }
+  notice.querySelector(".ob-wordmark").textContent = t(title);
+  notice.querySelector(".ob-tagline").textContent = t(body);
+  const acts = notice.querySelector(".ob-actions");
+  acts.replaceChildren();
+  for (const a of actions) {
+    const btn = ui.el("button", a.variant ? `btn ${a.variant}` : "btn", a.label);
+    btn.type = "button";
+    btn.dataset.testid = a.testid;
+    btn.addEventListener("click", a.onClick);
+    acts.append(btn);
+  }
+  showScreen("notice");
+}
+
+let sheetAutoOpened = false;
+
+function showMap() {
+  ensureMapUI();
+  showScreen("map");
+  requestAnimationFrame(() => mapView.invalidate());
+  if (sheet.getSnap() !== "full") {
+    // An empty circle opens at half so the invite nudge is in view.
+    const wantHalf = !state.demo && state.gen && members().length === 0 && !sheetAutoOpened;
+    if (wantHalf) sheetAutoOpened = true;
+    sheet.snapTo(wantHalf ? "half" : "peek", false);
+  }
+  render();
+}
+
+function ensureMapUI() {
+  if (mapView) return;
+  mapView = createMapView($("#map"), { onMarkerTap: focusMember });
+  // A demo entered before the map ever existed (the hosted tour's whole
+  // path) must not touch the street basemap even for a frame: a saved
+  // "dark" here would warm the tile host before startDemo forces "none".
+  mapView.setBasemap(state.demo ? "none" : state.settings.basemap);
+  // Places load before the map exists on a fresh launch (enterCircle runs
+  // loadPlaces first); the freshly built map has to catch up on them.
+  mapView.setPlaces(state.places);
+  sheet = ui.createSheet($("#sheet"), $("#sheet-drag"), $("#sheet-body"));
+
+  byTestid("share-toggle").addEventListener("click", onShareToggle);
+  const winBtns = [...document.querySelectorAll(".share-window-btn")];
+  for (const b of winBtns) {
+    b.addEventListener("click", () => setShareWindow(Number(b.dataset.win) || 0));
+  }
+  // Roving tabindex, the radiogroup contract: one tab stop, arrows to move.
+  $("#share-window")?.addEventListener?.("keydown", (e) => {
+    const delta = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+    if (!delta || !winBtns.length) return;
+    e.preventDefault();
+    const at = Math.max(0, winBtns.indexOf(document.activeElement));
+    const next = winBtns[(at + delta + winBtns.length) % winBtns.length];
+    next.focus();
+    next.click();
+  });
+  byTestid("checkin-button").addEventListener("click", doCheckin);
+  ui.holdToFire(byTestid("sos-button"), {
+    ms: 1200,
+    onFire: fireSos,
+    onShortTap: (atArmed) =>
+      ui.toast(atArmed ? "Tap once more to send SOS" : "Press and hold to send SOS"),
+  });
+  byTestid("settings-open").addEventListener("click", openSettings);
+  byTestid("circle-open").addEventListener("click", openCircles);
+  $("#fab-locate").addEventListener("click", locateMe);
+  $("#banner-demo-exit").addEventListener("click", exitDemo);
+  $("#banner-demo-map").addEventListener("click", toggleDemoMap);
+  $("#banner-demo-consent-go").addEventListener("click", loadDemoMap);
+  $("#banner-demo-consent-cancel").addEventListener("click", cancelDemoMap);
+  $("#nudge-invite").addEventListener("click", openInvite);
+  $("#sos-help").addEventListener("click", openHelpLink);
+  byTestid("members-open").addEventListener("click", openMembers);
+  byTestid("places-open").addEventListener("click", openPlaces);
+  byTestid("status-open").addEventListener("click", openStatus);
+  $("#banner-keys-open").addEventListener("click", openMembers);
+}
+
+// ------------------------------------------------------------- rendering
+
+function render() {
+  renderOnboarding();
+  for (const s of liveSheets) {
+    try {
+      s.refresh();
+    } catch (e) {
+      window.__starlingErrors.push(`sheet: ${String(e)}`);
+    }
+  }
+  if (state.screen !== "map" || !mapView) return;
+  const now = Date.now();
+  const list = sortMembers(members(), now);
+  renderChrome();
+  renderYou();
+  ui.updateMemberList($("#member-list"), list, {
+    now,
+    mePos: state.me,
+    statusOf: displayStatus,
+    onTap: focusMember,
+    placeOf: (id) => placeTracker.placeFor(id)?.name || null,
+  });
+  ui.updateAvaStrip($("#ava-strip"), list, { statusOf: displayStatus, now });
+  renderMarkers(list, now);
+  $("#nudge").hidden = state.demo || !state.gen || list.length > 0;
+  renderFocus(list, now);
+  renderAlerts();
+  renderTools();
+}
+
+function renderChrome() {
+  $("#pill-name").textContent = state.demo ? t("Demo circle") : state.circleName;
+  const dotState = state.demo ? "ok" : state.netStatus;
+  const dot = $("#status-dot");
+  dot.className = `status-dot dot-${dotState}`;
+  // The dot's color is invisible to a screen reader; this line is not.
+  $("#status-text").textContent =
+    dotState === "ok" ? t("Connected") : dotState === "reconnecting" ? t("Reconnecting") : t("Not connected");
+  const reconnecting = !state.demo && (state.offline || state.netStatus === "reconnecting");
+  $("#banner-offline").hidden = !reconnecting;
+  // A key change is the one warning that must not wait behind a collapsed
+  // sheet, so it also rides in the chrome, where nothing can cover it.
+  const changed = state.demo ? 0 : state.keyChanges.size;
+  $("#banner-keys").hidden = !changed;
+  if (changed) {
+    const [first] = [...state.keyChanges.keys()];
+    $("#banner-keys-text").textContent =
+      changed === 1 ? t("{who}'s keys changed", { who: displayName(first) }) : t("{n} members' keys changed", { n: changed });
+  }
+  $("#banner-insecure").hidden = !insecureContext;
+  $("#banner-demo").hidden = !state.demo;
+  $("#banner-demo-consent").hidden = !(state.demo && demoMapAsk);
+  if (state.demo) $("#banner-demo-map").textContent = demoMapOn ? t("Off-grid") : t("Real map");
+}
+
+function renderYou() {
+  const p = state.profile || {};
+  $("#you-emoji").textContent = p.emoji || "\u{1F9ED}";
+  $("#you-name").textContent = p.name || t("You");
+  $("#you-ava").style.setProperty("--m-hue", String(myHue()));
+  const hasFix = !!(state.me && Number.isFinite(state.me.lat));
+  let sub;
+  // Once the circle's screens show this phone as quiet, this one stops saying live.
+  const sent =
+    state.sharing && hasFix && !state.demo && isWrapped()
+      ? sentNote({
+          lastOkAt: shareStats.lastOkAt,
+          startedAt: shareStats.startedAt,
+          now: Date.now(),
+          staleMs: staleAfter({ cadence: cadenceS() }),
+          noteMs: noteAfter(cadenceS()),
+        })
+      : null;
+  if (!state.sharing) sub = t("Not sharing");
+  else if (locationPaused)
+    sub = state.sosActive ? t("SOS armed · Location is off") : t("Location is off on this phone. Turn it on to keep sharing.");
+  else if (state.sosActive)
+    sub = !hasFix
+      ? t("SOS armed · Locating...")
+      : sent?.stale
+        ? t("SOS armed · Not reaching your circle")
+        : t("SOS armed · Sharing live");
+  else if (!hasFix) sub = state.geoFailed ? t("No location fix yet. Still trying...") : t("Locating...");
+  else if (sent?.stale) sub = t("Not reaching your circle");
+  else sub = activePrecision() === "coarse" ? t("Live · Neighborhood") : t("Live · Precise");
+  if (sent && !locationPaused) sub += ` · ${sent.text}`;
+  const fwd = state.sharing && !state.demo ? forwardStatus() : null;
+  if (fwd?.host && !fwd.tor && !locationPaused) sub += ` · ${t("also to {host}", { host: fwd.host })}`;
+  const myPlace = placeTracker.placeFor(SELF_KEY);
+  if (myPlace && hasFix) sub = `${t("At {place}", { place: myPlace.name })} · ${sub}`;
+  if (state.sharing && shareDeadline) {
+    sub += ` · ${t("stops in {left}", { left: fmtRelTime(Math.max(0, shareDeadline - Date.now())) })}`;
+  }
+  const due = timerDue();
+  if (due) sub += ` · ${t("Check in by {time}", { time: fmtClock(due) })}`;
+  if (state.sharing && state.profile?.st) sub = `"${state.profile.st}" · ${sub}`;
+  // No background execution on this platform, so sharing runs only while the
+  // app is in front. It belongs on the line that claims you are live, not in a
+  // help page nobody opens mid-emergency.
+  if (state.sharing && state.foreground) sub += ` · ${t("Keep this screen on")}`;
+  // The relay refuses every post from a phone whose clock is out of tolerance.
+  // The one thing this line may never say in that state is that you are live.
+  if (state.sharing && state.clockError) sub = t("Not visible: this phone's clock is wrong");
+  // A message the circle has not received yet outranks everything else on
+  // this line: the gap between what you did and what they see IS the news.
+  const owed = outbox.pending();
+  if (owed.includes("sos")) sub = t("SOS queued. Starling keeps trying...");
+  else if (owed.includes("checkin")) sub = t("Check-in queued. Starling keeps trying...");
+  else if (owed.includes("bye")) sub = `${t("Not sharing")} · ${t("telling your circle...")}`;
+  $("#you-sub").textContent = sub;
+  const toggle = byTestid("share-toggle");
+  toggle.classList.toggle("on", state.sharing);
+  toggle.setAttribute("aria-pressed", String(state.sharing));
+  // The demo's loudest control must say it is fiction; the banner alone is
+  // easy to miss under a pressed "Sharing live" toggle.
+  $("#share-label").textContent = state.demo
+    ? t("Sharing (pretend)")
+    : state.sharing
+      ? hasFix
+        ? t("Sharing live")
+        : t("Locating...")
+      : t("Start sharing");
+  const win = $("#share-window");
+  if (win) {
+    win.hidden = !state.sharing || state.demo;
+    if (typeof win.querySelectorAll === "function") {
+      for (const b of win.querySelectorAll(".share-window-btn")) {
+        const sel = (Number(b.dataset.win) || 0) === shareWindowMs;
+        b.setAttribute("aria-checked", String(sel));
+        b.classList.toggle("sel", sel);
+        // Roving tabindex: the checked chip is the group's one tab stop.
+        b.setAttribute("tabindex", sel ? "0" : "-1");
+      }
+    }
+  }
+  const gw = $("#geo-warn");
+  gw.hidden = !state.geoDenied;
+  // The static copy talks about browser site settings, which is the right
+  // story on the web and nonsense inside the wrapper, where the fix is the
+  // app's own system permission page, one intent away.
+  if (state.geoDenied && isBundled() && !gw.dataset.wrapped) {
+    gw.dataset.wrapped = "1";
+    $(".notice-text", gw).textContent = t(
+      "Location permission is off for Starling. Open the app's settings, allow location, then come back and tap Start sharing.",
+    );
+    // The shortcut button needs the bridge; the iOS wrapper has none, and a
+    // button that does nothing is worse than the sentence alone.
+    if (native()?.openAppSettings) {
+      const openBtn = ui.el("button", "btn btn-secondary btn-small");
+      openBtn.type = "button";
+      openBtn.textContent = t("Open app settings");
+      openBtn.addEventListener("click", () => {
+        try {
+          native()?.openAppSettings?.();
+        } catch {
+          // an older wrapper without the method
+        }
+      });
+      gw.append(openBtn);
+    }
+  }
+  $("#sos-notice").hidden = !state.sosActive;
+  $("#sos-help").hidden = !(state.sosActive && beacon);
+  const checkBtn = byTestid("checkin-button");
+  checkBtn.setAttribute(
+    "aria-label",
+    state.sosActive ? t("Cancel SOS and check in with your circle") : t("Check in with your circle"),
+  );
+  checkBtn.classList.toggle("check-attn", state.sosActive);
+  byTestid("sos-button").classList.toggle("sos-active", state.sosActive);
+}
+
+// The surfaced-not-silent list: everything the app refuses to reconcile on its
+// own, in the order a frightened person needs it. Keys first, because a key
+// change is either a reinstall or somebody standing in for a member, and only
+// a human can tell which.
+function alertItems() {
+  const items = [];
+  if (state.demo) return items;
+  const now = Date.now();
+
+  for (const rec of members()) {
+    if (displayStatus(rec, now) !== "sos" || sosCardHidden.has(rec.id)) continue;
+    const who = rec.name || t("A member");
+    items.push({
+      id: `sos:${rec.id}`,
+      kind: "sos",
+      title: t("SOS from {who}", { who }),
+      text:
+        statusOf(rec, now) === "stale"
+          ? t("{who}'s phone stopped sending {ago} ago. The last position it sent is on the map.", { who, ago: fmtRelTime(now - rec.ts) })
+          : t("Their live position is on the map. It stays here until they check in."),
+      toasted: true,
+      actions: [
+        { label: "Show on map", variant: "btn-primary", testid: "alert-sos-show", onClick: () => focusMember(rec.id) },
+        {
+          label: "Got it",
+          testid: "alert-sos-ok",
+          onClick: () => {
+            sosCardHidden.add(rec.id);
+            render();
+          },
+        },
+      ],
+    });
+  }
+
+  for (const rec of members()) {
+    if (!overdue(rec, now)) continue;
+    const who = rec.name || t("A member");
+    items.push({
+      id: `due:${rec.id}`,
+      kind: "sos",
+      title: t("{who} missed their check-in", { who }),
+      text: t("Their timer ran out at {time}. Their last position is on the map.", { time: fmtClock(rec.due) }),
+      toasted: true,
+      actions: [{ label: "Show on map", variant: "btn-primary", testid: "alert-due-show", onClick: () => focusMember(rec.id) }],
+    });
+  }
+
+  if (
+    state.sharing &&
+    !state.sosActive &&
+    activeCadence() === 15 &&
+    ownBat != null &&
+    ownBat < 0.15 &&
+    !ownBatHidden
+  ) {
+    items.push({
+      id: "own-battery",
+      kind: "warn",
+      title: t("Your battery is at {pct}%", { pct: Math.max(1, Math.round(ownBat * 100)) }),
+      text: t("Sending every 5 minutes instead of every 15 seconds makes it last longer. An SOS still goes out every 15 seconds."),
+      actions: [
+        { label: "Every 5 minutes", variant: "btn-primary", testid: "alert-own-battery-slow", onClick: () => onSettingChange("cadence", 300) },
+        {
+          label: "Not now",
+          testid: "alert-own-battery-later",
+          onClick: () => {
+            ownBatHidden = true;
+            render();
+          },
+        },
+      ],
+    });
+  }
+
+  const ownDue = timerDue();
+  if (ownDue && overdue({ due: ownDue }, now)) {
+    items.push({
+      id: "own-due",
+      kind: "warn",
+      title: t("You missed your check-in"),
+      text: t("Your circle has been told. Check in now if you are okay."),
+      actions: [{ label: "Check in now", variant: "btn-primary", testid: "alert-own-due", onClick: doCheckin }],
+    });
+  }
+
+  if (state.stopRecord) {
+    const route = state.stopRecord.route;
+    const back = state.sharing && (route === "swipe" ? shareResumed : true);
+    const restricted = route === "system" && currentHealth()?.battery === "restricted";
+    const offerKeep = route === "lock" && canKeepSharing() && !keptPastClose();
+    const lockText = [
+      t("Starling locked itself while you were away, and a locked Starling holds no keys, so the lock ended your share."),
+      back ? t("Unlocking put it back on.") : "",
+      offerKeep ? t("Tap Keep sharing to let shares run while Starling is closed or locked. The lock then waits until the share ends.") : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const text =
+      route === "lock"
+        ? lockText
+        : route === "swipe"
+          ? back
+            ? t("The app was closed while sharing was on, which stopped it, and opening it again put it back on. If closing it was not you, check who has access to this phone.")
+            : t("The app was closed while sharing was on, which stops it every time. If that was not you, check who has access to this phone.")
+          : route === "renderer"
+            ? t("Android shut down the part of Starling that sends your position, so the share stopped. Nobody did this by hand.")
+            : route === "system"
+              ? restricted
+                ? t("Android stopped Starling in the background because its battery use is set to Restricted, and that ends every share a minute after you leave the app. Set it to Unrestricted in the app's settings.")
+                : t("Android stopped Starling in the background, so the share ended. Nobody did this by hand.")
+              : route === "stalled"
+                ? t("Android kept Starling from running in the background, so your circle stopped getting your location and the share ended. Nobody did this by hand.")
+                : t("Someone tapped Stop on the sharing notification. If that was not you, check who has access to this phone.");
+    const actions = [
+      {
+        label: "Got it",
+        testid: "alert-stop-record-ok",
+        onClick: () => {
+          state.stopRecord = null;
+          native()?.clearStopRecord?.();
+          render();
+        },
+      },
+    ];
+    if (restricted) {
+      actions.unshift({ label: "Open app settings", variant: "btn-primary", testid: "alert-stop-battery", onClick: openBatterySettings });
+    }
+    if (offerKeep) {
+      actions.unshift({
+        label: "Keep sharing",
+        variant: "btn-primary",
+        testid: "alert-stop-keep-sharing",
+        onClick: () => {
+          keepSharingFromCard();
+          state.stopRecord = null;
+          native()?.clearStopRecord?.();
+          render();
+        },
+      });
+    }
+    items.push({
+      id: "stop-record",
+      kind: "warn",
+      title: route === "lock" ? t("The app lock ended your share") : t("Your last share was stopped outside the app"),
+      text: route === "system" || route === "stalled" ? (back ? `${text} ${t("It is back on now that the app is open.")}` : text) : text,
+      actions,
+    });
+  }
+
+  if (
+    state.sharing &&
+    !state.locked &&
+    state.lock?.enabled &&
+    !state.settings.lockShareNoted &&
+    state.stopRecord?.route !== "lock" &&
+    canKeepSharing() &&
+    !keptPastClose()
+  ) {
+    items.push({
+      id: "lock-share",
+      kind: "info",
+      title: t("The app lock will end this share"),
+      text: `${t("Starling locks itself after a while in the background, and a locked Starling holds no keys, so the lock would end this share.")} ${t("Tap Keep sharing to let shares run while Starling is closed or locked. The lock then waits until the share ends.")}`,
+      actions: [
+        { label: "Keep sharing", variant: "btn-primary", testid: "alert-lock-share-keep", onClick: keepSharingFromCard },
+        { label: "Not now", testid: "alert-lock-share-later", onClick: markLockShareNoted },
+      ],
+    });
+  }
+
+  if (state.sharing && !state.locked && isWrapped()) {
+    for (const problem of shareProblems(currentHealth())) {
+      if (healthDismissed.has(problem)) continue;
+      if (problem === "restricted" && state.stopRecord?.route === "system") continue;
+      const item = healthCard(problem);
+      if (item) items.push(item);
+    }
+  }
+
+  for (const id of state.keyChanges.keys()) {
+    const who = displayName(id);
+    items.push({
+      id: `key:${id}`,
+      kind: "sos",
+      title: t("{who}'s keys changed", { who }),
+      text: t("That phone is answering with keys this device has never seen. It is a reinstall, or somebody else in {who}'s place, and nothing here can tell you which. Their location stays off your map until you check the number with them and accept it.", { who }),
+      actions: [
+        { label: "Check the numbers", variant: "btn-primary", testid: "alert-keys", onClick: openMembers },
+      ],
+    });
+  }
+
+  if (state.chainWipeFailed) {
+    // The honest version of the card below. Said plainly, because somebody who
+    // went away for a month and came back to a phone that could not finish
+    // erasing needs to know the difference between "gone" and "still here".
+    items.push({
+      id: "chain-wipe-failed",
+      kind: "warn",
+      title: "That circle expired, and this phone could not erase it",
+      text: "Its keys are out of memory and nothing you send arrives any more, but this device could not delete them from its own storage, most likely because there is no room left. They are still on the disk. Free some space and open Starling again to finish clearing it, or use Panic to erase everything now.",
+      actions: [{ label: "Try again", testid: "alert-wipe-retry", onClick: () => syncRatchet() }],
+    });
+  }
+
+  if (state.chainDestroyed) {
+    // The actions are the point. The card has always said "ask for a fresh
+    // invite link", and until the teardown started clearing the circle it left
+    // behind, following that advice was the one thing this device could not
+    // do: every path that admits a new circle threw on the dead generation.
+    const actions = [
+      { label: "Join with a link", variant: "btn-primary", testid: "alert-destroyed-join", onClick: promptPasteInvite },
+      { label: "Start a new circle", testid: "alert-destroyed-new", onClick: promptCreate },
+    ];
+    if (state.circles.length) {
+      actions.push({ label: "Your other circles", testid: "alert-destroyed-circles", onClick: openCircles });
+    }
+    items.push({
+      id: "chain-destroyed",
+      kind: "warn",
+      title: "This phone has been offline too long",
+      text: "Starling throws a circle's keys away rather than carry them for weeks, and this device passed that point while it was away. Its keys are gone from memory and from storage, and so is this phone's own identity in that circle, so nothing you send arrives and nothing sent to you can be read. Ask somebody in the circle for a fresh invite link.",
+      actions,
+    });
+  }
+
+  if (state.chainWiped) {
+    // Only what is actually true of this device: a phone with no app lock has
+    // none to reassure anybody about, and a card that names a protection the
+    // person does not have is the same defect as a card that claims an erase
+    // that did not happen.
+    const kept = state.lock?.enabled
+      ? t("Your app lock and your other circles were not touched.")
+      : t("Your other circles were not touched.");
+    items.push({
+      id: "chain-wiped",
+      kind: "warn",
+      title: "One of your circles expired while this phone was away",
+      text: t("Starling throws a circle's keys away rather than carry them for weeks, and that circle passed the point where this device could still read it, so it was erased from this phone. {kept} Ask somebody in that circle for a fresh invite link if you want back in.", { kept }),
+      // It stays until it is read, like a re-key somebody else made, and then
+      // it goes. Nothing else cleared it, so it sat on the map for good.
+      //
+      // This is also the only place the mark on disk is spent. It used to be
+      // spent by the entry that raised this card, microseconds after the
+      // destruct wrote it, which left the notice living in memory alone: a
+      // routine autolock dropped it, and the person came back into a different
+      // circle from the one they went away in with nothing said at all.
+      actions: [
+        {
+          label: "Got it",
+          testid: "alert-chain-wiped-ok",
+          onClick: () => {
+            state.chainWiped = null;
+            void clearDestroyMark();
+            render();
+          },
+        },
+      ],
+    });
+  }
+
+  if (state.missedRekey) {
+    items.push({
+      id: "missed",
+      kind: "warn",
+      title: "Your circle moved on without this phone",
+      text: "New keys were made while this device could not be reached, and they cannot be worked out from the old ones. Nothing you send now arrives. Ask somebody in the circle for a fresh invite link.",
+    });
+  }
+
+  if (state.rosterMismatch) {
+    items.push({
+      id: "mismatch",
+      kind: "warn",
+      title: "Your list of members does not match",
+      text: `${displayName(state.rosterMismatch.by)} made new keys for a circle with a different list of people than this phone has. One of you is looking at a member the other is not.`,
+      actions: [{ label: "See who is here", testid: "alert-mismatch", onClick: openMembers }],
+    });
+  }
+
+  if (state.clockError) {
+    const skew = state.clockError.skewMs;
+    const off =
+      Number.isFinite(skew) && Math.abs(skew) >= CLOCK_TOLERANCE_MS
+        ? t(" It is about {n} minutes {dir}.", { n: Math.round(Math.abs(skew) / 60000), dir: skew > 0 ? t("behind") : t("ahead") })
+        : "";
+    items.push({
+      id: "clock",
+      kind: "warn",
+      title: "This phone's clock is wrong",
+      text: t("Your circle cannot see you. The relay refuses anything stamped with a time that far out, so your position is not going anywhere.{off} Turn on automatic date and time, then check again.", { off }),
+      actions: [{ label: "Check again", testid: "alert-clock", onClick: recheckClock }],
+    });
+  }
+
+  for (const req of state.joinRequests) {
+    items.push({
+      id: `join:${req.memberId}`,
+      kind: "info",
+      title: t("{who} wants to join", { who: req.name || t("Someone") }),
+      text: "Check their safety number with them first. Accepting is what lets them see everyone's location.",
+      actions: [
+        { label: "Review the request", variant: "btn-primary", testid: "alert-review", onClick: openInvite },
+      ],
+    });
+  }
+
+  if (state.joining && state.gen) {
+    // Somebody answering the link who is not the person who sent it is the
+    // attack this whole handshake exists to stop. It was stopped, and the
+    // person still needs to know it happened.
+    const jumped = state.joining.imposters
+      ? t(" A welcome that did not match the link's sender was refused. That can be an interception attempt, or just a stale retry. Check with whoever gave you the link before you use it again.")
+      : "";
+    items.push({
+      id: "joining",
+      kind: state.joining.imposters ? "warn" : "info",
+      title: t("Waiting to be let into {name}", { name: state.joining.circleName }),
+      text: t("Somebody already in that circle has to accept your request. Read them your number: {digits}{jumped}", { digits: state.joining.safety || t("not ready yet"), jumped }),
+      actions: [{ label: "Cancel the request", testid: "alert-cancel-join", onClick: cancelJoin }],
+    });
+  }
+
+  if (state.joinIncomplete) {
+    const { got, want } = state.joinIncomplete;
+    items.push({
+      id: "join-incomplete",
+      kind: "warn",
+      title: "That invitation arrived incomplete",
+      text: t(want === 1 ? "The circle sent {want} member record and only {got} arrived, so this device would not be able to tell who is making new keys and would quietly stop keeping up. You were not joined. Ask for a fresh invite link." : "The circle sent {want} member records and only {got} arrived, so this device would not be able to tell who is making new keys and would quietly stop keeping up. You were not joined. Ask for a fresh invite link.", { want, got }),
+      actions: [
+        {
+          label: "Got it",
+          testid: "alert-join-incomplete-ok",
+          onClick: () => {
+            state.joinIncomplete = null;
+            render();
+          },
+        },
+      ],
+    });
+  }
+
+  if (state.joinedVia) {
+    const v = state.joinedVia;
+    items.push({
+      id: "joined-via",
+      kind: "info",
+      title: t("Check {who}'s number", { who: displayName(v.memberId, t("the person who let you in")) }),
+      text: t("Their number is {theirs}. Yours is {mine}. Read them to each other out loud, on a line you already trust. Nothing else in this circle has been checked by a person yet.", { theirs: v.safety || t("not available"), mine: v.mine || t("not available") }),
+      actions: [
+        { label: "Open members", variant: "btn-primary", testid: "alert-joined-via", onClick: openMembers },
+        {
+          label: "Done",
+          testid: "alert-joined-via-ok",
+          onClick: () => {
+            state.joinedVia = null;
+            render();
+          },
+        },
+      ],
+    });
+  }
+
+  if (state.foreground) {
+    const run = state.foreground.elapsedMs >= 60000 ? t(" for {t}", { t: fmtRelTime(state.foreground.elapsedMs) }) : "";
+    items.push({
+      id: "foreground",
+      kind: "info",
+      title: t("Sharing{run}, and this screen has to stay on", { run }),
+      text: state.foreground.wakeLock
+        ? "This phone gives a web app no way to send a position in the background, so Starling only sends while it is open and in front. It is holding the screen awake for you."
+        : "This phone gives a web app no way to send a position in the background, so Starling only sends while it is open and in front. It could not hold the screen awake, so stop the phone locking itself.",
+    });
+  }
+
+  if (state.lastRekey) {
+    const r = state.lastRekey;
+    const gone = r.removedNames;
+    items.push({
+      id: "rekey",
+      kind: "info",
+      title: gone.length
+        ? (gone.length === 1
+            ? t("{who} removed {gone}", { who: r.byName, gone: gone[0] })
+            : t("{who} removed {n} people", { who: r.byName, n: gone.length }))
+        : t("{who} changed the keys", { who: r.byName }),
+      text: gone.length
+        ? t("{who} can read nothing this circle sends from now on. Everyone still here got new keys.", { who: gone.length === 1 ? gone[0] : t("They") })
+        : "Everyone in the circle has new keys. Nobody was removed, and nothing on your map goes away.",
+      actions: [
+        {
+          label: "Got it",
+          testid: "alert-rekey-ok",
+          onClick: () => {
+            state.lastRekey = null;
+            render();
+          },
+        },
+      ],
+    });
+  }
+
+  // iOS hands a web app in a tab no background execution and a store the OS
+  // evicts under pressure. Installed, the circle keys get a real home. Said
+  // once, and it takes an answer.
+  if (state.gen && isIOS() && !isInstalled() && !state.installDismissed) {
+    items.push({
+      id: "install",
+      kind: "info",
+      title: "Add Starling to your home screen",
+      text: isIOSSafari()
+        ? "In a tab, iOS can throw your circle's keys away when storage runs low, and sharing stops the moment you switch apps. Tap the Share button, then Add to Home Screen, and open Starling from there."
+        : "In a tab, iOS can throw your circle's keys away when storage runs low. Open this page in Safari, tap Share, then Add to Home Screen.",
+      actions: [{ label: "Not now", testid: "alert-install-no", onClick: dismissInstall }],
+    });
+  }
+
+  // A whole circle going silent at once is what being cut off by a missed
+  // re-key looks like from the inside, and nothing else ever says so. It is
+  // also what everyone's phone being in a bag looks like, so the card asks a
+  // question instead of announcing a verdict.
+  if (state.sharing && state.pinned.size > 0 && !quietDismissed) {
+    const heard = members().map((r) => r.ts).filter(Number.isFinite);
+    const newest = heard.length ? Math.max(...heard) : 0;
+    if (newest && Date.now() - newest > QUIET_CHANNEL_MS) {
+      items.push({
+        id: "quiet-channel",
+        kind: "info",
+        title: "Nobody has been heard from in a while",
+        text: t("No update from anyone in over {n} minutes. Usually that just means phones are asleep. But if others say they are sharing right now, this phone may have missed the circle's new keys; ask any member for a fresh invite to be sure.", { n: Math.round(QUIET_CHANNEL_MS / 60000) }),
+        actions: [
+          {
+            label: "Probably just quiet",
+            testid: "alert-quiet-ok",
+            onClick: () => {
+              quietDismissed = true;
+              render();
+            },
+          },
+        ],
+      });
+    }
+  }
+
+  return items;
+}
+
+let announcedAlerts = new Set();
+
+function renderAlerts() {
+  const items = alertItems();
+  ui.updateAlerts($("#alerts"), items);
+  // The alert cards live in the sheet body, which is aria-hidden and inert
+  // while the sheet sits at peek, so their role=alert never reaches a screen
+  // reader there. Each new alert speaks once through the toast live region,
+  // which is never hidden.
+  const seen = new Set();
+  for (const item of items) {
+    seen.add(item.id);
+    if (announcedAlerts.has(item.id)) continue;
+    announcedAlerts.add(item.id);
+    if (item.kind !== "info" && !item.toasted && item.title && sheet && sheet.getSnap() === "peek") ui.toast(item.title);
+  }
+  announcedAlerts = seen;
+}
+
+// The way in to the members screen, and the only place the app says out loud
+// how much of its own roster has actually been checked by a person.
+function renderTools() {
+  const tools = $(".sheet-tools");
+  if (!tools) return;
+  tools.hidden = state.demo || !state.gen;
+  const changed = state.keyChanges.size;
+  const unchecked = [...state.pinned.values()].filter((r) => !r.verified).length;
+  $("#members-tool-sub").textContent = changed
+    ? t("Keys changed. Check before you trust it.")
+    : unchecked
+      ? t(unchecked === 1 ? "{n} person you have not checked" : "{n} people you have not checked", { n: unchecked })
+      : state.pinned.size
+        ? t("Everyone here is checked")
+        : t("Nobody else in this circle yet");
+  const badge = $("#members-badge");
+  const count = changed || unchecked;
+  badge.hidden = !count;
+  badge.textContent = String(count);
+  badge.classList.toggle("tool-badge-alert", changed > 0);
+  const timerSub = $("#timer-tool-sub");
+  if (timerSub) {
+    const due = timerDue();
+    timerSub.textContent = !due
+      ? t("Get your circle told if you miss a check-in")
+      : overdue({ due }, Date.now())
+        ? t("You missed your check-in")
+        : t("Check in by {time}", { time: fmtClock(due) });
+  }
+  const timerBtn = byTestid("timer-open");
+  if (timerBtn) timerBtn.onclick = openCheckinTimer;
+  const placesSub = $("#places-tool-sub");
+  if (placesSub) {
+    const n = state.places.length;
+    placesSub.textContent = n
+      ? t(n === 1 ? "{n} place saved on this phone" : "{n} places saved on this phone", { n })
+      : t("Get told when your people arrive");
+  }
+}
+
+// The onboarding screen carries the join wait, because a device with no circle
+// yet has nowhere else to put it: without this, asking to join looks exactly
+// like nothing happening.
+let installWired = false;
+function renderOnboarding() {
+  const card = document.getElementById("join-waiting");
+  if (!card) return;
+  const waiting = !!state.joining && !state.gen;
+  card.hidden = !waiting;
+  if (waiting) {
+    // No circle name here: the joiner has not been told one, and a made-up
+    // label in a sentence about who is deciding their access reads as fact.
+    // The refused-welcome copy names the innocent causes too: the check
+    // cannot tell an attack from a stale retry, so neither may the words.
+    const waitedMin = (Date.now() - state.joining.since) / 60000;
+    let text;
+    if (state.joining.imposters) {
+      text = t(
+        "A welcome arrived that did not match the person this link came from, and it was refused. That can be an interception attempt, or just a stale retry or a network hiccup. Your request is still waiting for the person who actually invited you; check with them before using the link again.",
+      );
+    } else if (waitedMin >= 10) {
+      text = t(
+        "This is taking a while. The person who invited you may not have seen the request yet, or the link may have expired. Reach them however you normally would; a fresh link takes a minute to make.",
+      );
+    } else {
+      text = t(
+        "Your request is waiting on the relay. Somebody already in the circle has to check your number and accept it, and they do not have to be online right now.",
+      );
+    }
+    $("#join-waiting-text").textContent = text;
+    ui.setSafety($("#join-waiting-safety"), state.joining.safety);
+  }
+
+  const install = document.getElementById("install-card");
+  const canPrompt = canPromptInstall();
+  // Never in a wrapper, whatever events a WebView might invent: the app
+  // does not offer to install itself.
+  const wantInstall =
+    shareCapable() &&
+    !isBundled() &&
+    !state.demo &&
+    !state.installDismissed &&
+    ((isIOS() && !isInstalled()) || canPrompt);
+  install.hidden = !wantInstall;
+  if (wantInstall) {
+    $("#install-text").textContent = t(isIOS()
+      ? isIOSSafari()
+        ? "In a Safari tab, iOS can throw your circle's keys away when storage runs low, and sharing stops the moment you switch apps. Tap the Share button, then Add to Home Screen."
+        : "In a browser tab, iOS can throw your circle's keys away when storage runs low. Open this page in Safari, tap Share, then Add to Home Screen."
+      : "Installed, Starling opens without browser chrome and its storage is harder for the browser to evict. Nothing is uploaded either way.");
+    const go = $("#install-go");
+    go.hidden = !canPrompt;
+    if (canPrompt && !installWired) {
+      installWired = true;
+      go.addEventListener("click", async () => {
+        go.disabled = true;
+        const outcome = await promptInstall();
+        go.disabled = false;
+        if (outcome === "accepted") dismissInstall();
+        render();
+      });
+    }
+  }
+}
+
+async function dismissInstall() {
+  state.installDismissed = true;
+  await dbSet("installDismissed", true).catch(() => {});
+  render();
+}
+
+// A wrong clock is measured, not guessed, so the way out of it is another
+// measurement rather than a hopeful retry.
+async function recheckClock() {
+  const skewMs = await measureClockSkew();
+  if (skewMs === null) {
+    ui.toast("Could not reach the relay to check the time.", "warn");
+    return;
+  }
+  if (Math.abs(skewMs) < CLOCK_TOLERANCE_MS) {
+    state.clockError = null;
+    ui.toast("The clock looks right now. Your circle can see you again.");
+  } else {
+    state.clockError = { skewMs, at: Date.now() };
+    ui.toast(t("Still about {n} minutes out.", { n: Math.round(Math.abs(skewMs) / 60000) }), "warn");
+  }
+  render();
+}
+
+function renderMarkers(list, now) {
+  const wanted = new Set();
+  for (const rec of list) {
+    if (!Number.isFinite(rec.lat) || !Number.isFinite(rec.lon)) continue;
+    wanted.add(rec.id);
+    mapView.upsert(rec.id, {
+      lat: rec.lat,
+      lon: rec.lon,
+      name: rec.name || t("Member"),
+      emoji: rec.emoji || "",
+      hue: rec.hue ?? hueFromMemberId(rec.id),
+      // map.js draws sos, live and stale; a missed check-in keeps its wire look there.
+      status: displayStatus(rec, now) === "overdue" ? statusOf(rec, now) : displayStatus(rec, now),
+      ts: rec.ts,
+      now,
+      staleMs: staleAfter(rec),
+    });
+  }
+  if (state.me && Number.isFinite(state.me.lat)) {
+    wanted.add("me");
+    mapView.upsert("me", {
+      lat: state.me.lat,
+      lon: state.me.lon,
+      name: t("You"),
+      emoji: state.profile?.emoji || "\u{1F9ED}",
+      hue: myHue(),
+      status: state.sosActive ? "sos" : "live",
+      self: true,
+      sharing: state.sharing,
+      ts: state.me.ts,
+      now,
+    });
+  }
+  for (const id of mapView.markerIds()) {
+    if (!wanted.has(id)) mapView.removeMarker(id);
+  }
+  if (focusedId && focusTrailOn && state.settings.trail) {
+    const rec = list.find((r) => r.id === focusedId);
+    if (rec?.trail?.length > 1) {
+      mapView.setTrail(focusedId, rec.trail, rec.hue ?? hueFromMemberId(rec.id));
+    }
+  }
+  // In the demo every walker gets a short comet tail; it sells the motion.
+  if (state.demo) {
+    for (const rec of list) {
+      if (rec.id === focusedId && focusTrailOn) continue;
+      if (rec.trail?.length > 1) {
+        mapView.setTrail(rec.id, rec.trail.slice(-50), rec.hue ?? 0);
+      }
+    }
+  }
+}
+
+function renderFocus(list, now) {
+  const card = $("#focus-card");
+  if (!focusedId) {
+    card.hidden = true;
+    return;
+  }
+  const rec = list.find((r) => r.id === focusedId);
+  if (!rec) {
+    unfocus();
+    return;
+  }
+  ui.renderFocusCard(card, rec, {
+    now,
+    mePos: state.me,
+    statusOf: displayStatus,
+    place: placeTracker.placeFor(rec.id)?.name || null,
+    trailOn: focusTrailOn && state.settings.trail,
+    onTrailToggle: () => {
+      focusTrailOn = !focusTrailOn;
+      if (!focusTrailOn) mapView.clearTrail(focusedId);
+      render();
+    },
+    onClose: unfocus,
+  });
+}
+
+// ---------------------------------------------------------------- focus
+
+function focusMember(id) {
+  if (id === "me") {
+    locateMe();
+    return;
+  }
+  const rec = members().find((r) => r.id === id);
+  if (!rec) return;
+  // Switching focus directly between members must not leave the previous
+  // member's trail painted on the map.
+  if (focusedId && focusedId !== id) mapView.clearTrail(focusedId);
+  focusedId = id;
+  focusTrailOn = state.settings.trail;
+  if (Number.isFinite(rec.lat)) mapView.focusOn(rec.lat, rec.lon);
+  render();
+}
+
+function unfocus() {
+  if (focusedId) mapView.clearTrail(focusedId);
+  focusedId = null;
+  const card = $("#focus-card");
+  card.hidden = true;
+  card.dataset.member = "";
+  render();
+}
+
+function locateMe() {
+  if (state.me && Number.isFinite(state.me.lat)) {
+    mapView.focusOn(state.me.lat, state.me.lon, 16, 0);
+  } else {
+    ui.toast("No location yet. Start sharing to place yourself.");
+  }
+}
+
+// ---------------------------------------------------------------- circle
+
+async function enterCircle() {
+  // Belt and braces: the boot gate already keeps the hosted page out of
+  // here, but a circle must never materialize where sharing is not allowed.
+  if (!shareCapable()) return;
+  // The same floor for the lock. Every caller that can reach here across an
+  // await checks state.locked for itself, and this is what catches the one
+  // that forgets: a circle that materializes behind the lock screen puts the
+  // map, the roster and everyone's position back on screen with no passcode
+  // asked, which is the lock bypassed rather than a circle entered.
+  if (state.locked) return;
+  if (!state.gen) return;
+  // Before the sync, not after: this circle is in the active slots, so an
+  // earlier self-destruct has something true to say here, and a chain that
+  // destroys itself on the very next line has to be able to leave its own mark
+  // behind.
+  //
+  // This is the only place the mark is ever READ. Nothing read it on the
+  // unlocked path, which is the configuration the app ships with, so a person
+  // whose circle expired while the phone was away came back to the next circle
+  // in the list with nothing said at all, and went on believing they were
+  // visible to a circle that could not see them.
+  //
+  // Reading is all this does. Spending it here spent it in the same tick the
+  // destruct wrote it, because the destruct promotes the next circle and
+  // enters it immediately, and everything after that can lose the card: a
+  // sixty second autolock drops state.chainWiped and there was then no record
+  // anywhere that a circle had expired. The person dismissing the card is what
+  // spends the mark.
+  if (!state.chainWiped && (await hasDestroyMark())) state.chainWiped = { at: Date.now() };
+  state.gen.ratchet.setHistoryEpochs(historyEpochs());
+  await syncRatchet();
+  // The sync can end the circle rather than advance it: a chain asked to walk
+  // further than the catch-up cap destroys itself, and the teardown takes the
+  // generation with it. There is nothing left here to point a poller at, and
+  // the alert the teardown raised is already on screen.
+  if (!state.gen) return;
+  await loadPlaces();
+  // A watch-only member is exactly who an SOS notification exists for, and
+  // they may never touch the share toggle that used to be the only thing
+  // that asked. Ask when a circle becomes real instead. Android silently
+  // stops re-prompting after repeated denials; below API 33 this is a no-op.
+  try {
+    native()?.ensureNotifyPermission?.();
+  } catch {
+    // an older wrapper without the method
+  }
+  setupNet();
+  startRekeyTimer();
+  startInviteWatch();
+  showMap();
+  // Last, and deliberately not awaited into the boot path: a resume needs the
+  // sender and the poller this call just armed, and nothing above it should
+  // wait on a geolocation prompt.
+  resumeShareIfArmed().catch((e) => window.__starlingErrors.push(`share resume: ${String(e)}`));
+}
+
+// The one call that actually destroys expired key material. Nothing else walks
+// the chain forward on a device that is only listening, so a phone that has
+// been switched off for a week would otherwise come back still holding the
+// week's keys. Called on entry and on every resume, and the survivor is written
+// down, because a chain key left on disk is a chain key a seized phone has.
+async function syncRatchet() {
+  if (!state.gen || state.locked) return;
+  // A null head means the chain destroyed itself rather than walk a jump it
+  // is not allowed to walk. Nobody used to read this, so the app carried on
+  // showing a connected circle it could neither send to nor read.
+  if ((await state.gen.ratchet.syncToClock()) === null) {
+    await onChainDestroyed();
+    return;
+  }
+  await persistRatchet();
+}
+
+async function persistRatchet() {
+  if (!state.gen || state.locked || circleBusy) return;
+  const snap = state.gen.ratchet.snapshot();
+  // No snapshot means the chain has been destroyed. Returning early here left
+  // the last chain key sitting in the slot, which is the one thing the
+  // self-destruct exists to remove: a phone that has been off for a month
+  // would still hand a seizer a key on disk. It is also how the poll path
+  // learns about it at all, because the poller advances the chain itself and
+  // has no way to report back.
+  if (!snap) {
+    await onChainDestroyed();
+    return;
+  }
+  if (snap.e0 === storedCkEpoch) return;
+  try {
+    await writeGenAtRest();
+  } catch (e) {
+    window.__starlingErrors.push(`ratchet: ${String(e)}`);
+  }
+}
+
+// The chain is gone and there is no way back to this circle from this device.
+//
+// Everything the ratchet held was older than the relay's own 24 hour
+// retention, so nothing readable was lost, but nothing sent from here arrives
+// either and nothing arriving here opens. The stored form goes with it: a
+// self-destruct that only happens in memory is not a self-destruct, it is a
+// reboot away from being undone. Then the person is told, in those words,
+// instead of being left looking at a map that says Live.
+async function onChainDestroyed() {
+  if (state.chainDestroyed) return;
+  state.chainDestroyed = true;
+  if (state.sharing) stopSharingInternals();
+  teardownNet();
+  // The join goes the way lockNow and cancelJoin send it, not half of it.
+  // Stopping the poll and leaving the record behind left state.joining holding
+  // a live invite secret for a rendezvous nothing was listening to any more,
+  // with the screen still saying "waiting to be let in" and cancel the only
+  // way out of it.
+  stopJoinWatch();
+  if (state.joining) zero(state.joining.secret);
+  state.joining = null;
+  clearInterval(rekeyTimer);
+  // The invitation is a live credential for a circle this device can no
+  // longer reach, so it leaves memory in the same breath as the slot.
+  if (state.invite) zero(state.invite.secret);
+  state.invite = null;
+  state.joinRequests = [];
+  // Positions decrypted from a circle this device can no longer read do not
+  // get to sit on the map looking current.
+  lastSentPos = null;
+  resetMemberAlerts();
+  mapView?.clearAll();
+  // And the circle itself goes, because there is no longer one here.
+  //
+  // This used to stop at the network: state.gen stayed live, holding a ratchet
+  // with no key left in it, and every path that writes the outgoing circle
+  // down before changing circles threw on it. That took out the one thing the
+  // alert card tells the person to do. Create, switch and join all start that
+  // way, and on the join path the throw lands inside a promise nobody reads,
+  // so the welcome was swallowed while the inviter had already re-keyed the
+  // circle and burned the link. Clearing it here is what makes the advice on
+  // screen true.
+  state.gen?.ratchet.destroy();
+  state.gen = null;
+  state.pinned = new Map();
+  state.genRoster = new Set();
+  state.keyChanges.clear();
+  state.rosterPending = null;
+  state.rosterMismatch = null;
+  state.missedRekey = false;
+  state.lastRekey = null;
+  state.joinedVia = null;
+  storedCkEpoch = -1;
+  state.me = null;
+  focusedId = null;
+  $("#focus-card").hidden = true;
+  try {
+    if (await leaveDestroyedCircle(state.circles)) await enterCircle();
+  } catch (e) {
+    // The erase threw, so the circle is still whole on disk: leaveActive
+    // writes its journal before it deletes anything and rethrows if even that
+    // will not land. The keys are out of memory, which is worth something, but
+    // the card claims they are gone from STORAGE and right now that is false.
+    //
+    // A card naming a protection the person does not have is the same defect
+    // as a card claiming an erase that did not happen, and this comes up on
+    // exactly the device the catch-up destruct exists for: one with no room
+    // left to write. So say what actually happened and keep the retry alive
+    // for the next launch, rather than leaving a reassuring sentence on screen
+    // over a disk that still holds the chain key.
+    state.chainDestroyed = false;
+    state.chainWipeFailed = { at: Date.now(), why: String(e) };
+    window.__starlingErrors.push(`self destruct: ${String(e)}`);
+  }
+  render();
+}
+
+// The self-destruct's journal.
+//
+// A device that has just erased its own chain looks, on disk, exactly like a
+// device whose last-circle leave was cut short, because that is now what it
+// is: the same leaveActive, the same purge, the same journal. What the two
+// cannot share is the app lock. A leave is asked for, so it takes the lock
+// with it rather than leaving a lock screen no passcode can satisfy; a
+// self-destruct is not asked for and must never cost anybody their lock. So
+// the disk says which of the two this was.
+//
+// That is the whole of what this flag does. It changes the words the person
+// reads and it keeps the lock record alive through an empty launch. It steers
+// no repair, because there is no repair left to steer: the destruct finishes
+// its own leave at the moment it happens.
+//
+// Like the leave journal beside it, it is a flag and nothing else: it names no
+// circle and holds no key, so it needs no sealed spelling and a device that
+// cannot open the vault can still read it.
+const DESTROYED_KEY = "destroyed";
+
+// Is there a mark? Reading one never spends it.
+async function hasDestroyMark() {
+  try {
+    return !!(await dbGet(DESTROYED_KEY));
+  } catch (e) {
+    window.__starlingErrors.push(`destroy mark: ${String(e)}`);
+    return false;
+  }
+}
+
+// Spend it. One caller, and it is the person tapping "Got it" on the card that
+// explains the circle that went away, because that tap is the only evidence
+// anybody was actually told.
+//
+// So it is still only ever cleared where a circle genuinely holds the active
+// slots, since that is the only place the card is raised. Clearing it while
+// the disk was still empty is what cost the app lock twice: the launch after
+// that saw a lock record with nothing behind it, read it as an abandoned
+// install, and deleted it.
+async function clearDestroyMark() {
+  try {
+    await dbDel(DESTROYED_KEY);
+  } catch (e) {
+    // A mark nobody clears only ever makes a later launch say it again, so a
+    // failure here is noted rather than raised.
+    window.__starlingErrors.push(`destroy mark: ${String(e)}`);
+  }
+}
+
+// The self-destruct's exit from the circle, which is a LEAVE.
+//
+// Three review rounds running, the bespoke machinery that used to live here
+// produced a critical defect: a wire field that let any member fire the
+// destruct, then a recovery that deleted the app lock at the next unlock, then
+// the same deletion arriving one launch later. Every round it grew and broke
+// somewhere new. So it is gone. Erasing a circle is leaving it, and leaving is
+// the path this app has tested to death.
+//
+// What comes with that path, none of it written twice: the promotion of the
+// next circle in the list, the journal that finishes an interrupted purge on
+// the following launch, the fence that refuses a roster write queued before
+// the leave, and LEAVE_PURGE_KEYS, which is what finally takes the things
+// forgetChainAtRest left sitting on the disk while the card claimed the keys
+// were gone. This device's keypair for the circle is the one that matters:
+// it carries the member id this phone posted under, and that ties a seized
+// phone to a channel the relay has logs of.
+//
+// The only difference from the leave a person asks for is the wording, and the
+// mark is the whole of it. The app lock is emphatically NOT deleted here.
+//
+// This does the disk and the memory adopt and answers whether a circle took
+// the slots. Entering it belongs to the caller, because the unlock cannot call
+// itself unlocked until this has come back: a storage failure there has to
+// leave the lock screen up with a lock screen's state behind it, not an
+// unlocked session holding nothing.
+async function leaveDestroyedCircle(circles) {
+  // The mark is bookkeeping. It changes wording and it keeps a lock record
+  // alive through an empty launch, and that is all it does.
+  //
+  // It used to be written BEFORE the erase, copying the leave journal's
+  // ordering, and that copied the wrong property. The leave journal is written
+  // first because it is what makes an interrupted delete recoverable. This
+  // mark recovers nothing, so putting it first only gave a failed bookkeeping
+  // write a veto over the erase: on a device with no storage quota left, the
+  // dbSet rejected, the throw was swallowed, leaveActive never ran, and the
+  // chain key, the channel id, the roster and the invitation all stayed on
+  // disk while the card on screen said the keys were gone. That is the exact
+  // device class the catch-up destruct exists for.
+  //
+  // So: erase first, and let the bookkeeping fail on its own if it must.
+  const res = await leaveActive(kv, lockCtx(), { circles, toIndex: 0 });
+  try {
+    await dbSet(DESTROYED_KEY, 1);
+  } catch {
+    // The circle is already gone from disk, which is the part that matters.
+    // Losing the mark costs an explanation, not a secret.
+  }
+  state.circles = res.circles;
+  if (res.active) {
+    // The move promoteCircle and boot already make. applyActive clears
+    // chainDestroyed for the circle arriving, and chainWiped is what says the
+    // one that went away went on its own rather than being left.
+    applyActive(res.active);
+    state.chainWiped = { at: Date.now() };
+    return true;
+  }
+  // Nothing took the slots, so the purge above took this device's keypair and
+  // the circle's name with it, and memory has to say what the disk says.
+  state.identity = null;
+  state.circleName = "My circle";
+  state.circleShare = packShare(null);
+  if (res.pending) {
+    ui.toast(
+      "That circle expired, and this device could not erase all of it. Open Starling again to finish clearing it.",
+      "warn",
+    );
+  }
+  return false;
+}
+
+// What a launch says when a circle erased itself and there was no other circle
+// for the slots to fall to. Both launches that can find that shape, locked and
+// unlocked, say it with this, so there is one wording and one set of ways out.
+function showDestroyedNotice() {
+  const lockLine = state.lock?.enabled
+    ? t(" Your app lock is untouched and still protects whatever you set up next.")
+    : "";
+  showNotice({
+    title: "Those keys are gone",
+    body: t("Starling throws a circle's keys away rather than carry them for weeks, and this phone passed that point while it was away. The circle was erased from this device, and there was no other circle to fall back to.{lockLine} Ask somebody for a fresh invite link, or start a new circle.", { lockLine }),
+    actions: [
+      { label: "Join with a link", variant: "btn-primary", testid: "notice-destroyed-join", onClick: promptPasteInvite },
+      { label: "Start a new circle", testid: "notice-destroyed-new", onClick: promptCreate },
+    ],
+  });
+}
+
+// Write the live generation into the active slots.
+//
+// The whole record goes into one staged slot first, because the chain key and
+// the record naming it have to change together and two kv writes are not one
+// write. A crash in between would leave a chain key filed under the wrong
+// epoch, or a channel with no key that can read it, and either way the member
+// silently stops being visible to their circle. Boot applies whatever the
+// staging slot still holds and then clears it, so a torn write finishes on the
+// next launch instead of costing a circle.
+async function writeGenAtRest() {
+  const rec = genRecord();
+  const lock = lockCtx();
+  await writeRecordAtRest(kv, lock, STAGED_SLOT, packStagedGen({ ...rec, pinned: state.pinned }));
+  await writeRecordAtRest(kv, lock, GEN_SLOT, packGenMeta(rec));
+  await writeRecordAtRest(kv, lock, PINNED_SLOT, packPinned(state.pinned));
+  await writeSecretAtRest(rec.ck);
+  await writeRecordAtRest(kv, lock, STAGED_SLOT, null);
+  storedCkEpoch = rec.ckEpoch;
+}
+
+// createRoster pins a member the first time it sees a point whose id genuinely
+// commits to the keys it carries. That is a durable decision about who this
+// circle is, so it is written down as it is made.
+const pinnedStore = {
+  get: (id) => state.pinned.get(id),
+  set: (id, rec) => {
+    // net.js hands over the keys as the relay spelled them. What lands in the
+    // durable roster is the canonical spelling of the same bytes.
+    state.pinned.set(id, canonPinned(rec));
+    persistPinned();
+  },
+  // The receiver-side member cap in net.js reads this. It was missing, so
+  // `pinned.size >= MEMBER_CAP` compared undefined and was false forever: the
+  // cap passed its own tests against a bare Map and did nothing at all in the
+  // app, and a malicious relay could still pin unlimited fabricated members
+  // into the durable roster. A getter rather than a copied number, because a
+  // re-key REPLACES state.pinned instead of mutating it, and a number read
+  // once would go stale the moment a generation changed.
+  get size() {
+    return state.pinned.size;
+  },
+};
+
+let pinnedWrite = Promise.resolve();
+function persistPinned() {
+  // A circle mutation is rewriting these same slots for a different circle;
+  // its own write covers the roster, and a stray one from a roster that is
+  // being torn down must not land on top of it. A destroyed chain has already
+  // had its slots erased and nothing gets to put them back.
+  if (state.locked || !state.gen || circleBusy || state.chainDestroyed) return;
+  pinnedWrite = pinnedWrite
+    .then(() => writeRecordAtRest(kv, lockCtx(), PINNED_SLOT, packPinned(state.pinned)))
+    .catch((e) => window.__starlingErrors.push(`pinned: ${String(e)}`));
+}
+
+function setupNet() {
+  poller?.stop();
+  sender?.cancel?.();
+  // Whatever the old sender still owed dies with it: a queued retry must
+  // not cross into the channel this setup is arming.
+  outbox.clear();
+  const gen = state.gen;
+  roster = createRoster({
+    channelId: gen.channelId,
+    ratchet: gen.ratchet,
+    selfId: state.identity.memberId,
+    pinned: pinnedStore,
+    onControl,
+    onKeyChange,
+  });
+  let lastTsCache = null;
+  const seedLastTs = (v) => {
+    lastTsCache = Math.max(lastTsCache ?? 0, Number(v) || 0);
+    return lastTsCache;
+  };
+  const lastTsRead = dbGet("lastSentTs").then(seedLastTs, () => seedLastTs(0));
+  sender = createSender({
+    identity: state.identity,
+    channelId: gen.channelId,
+    ratchet: gen.ratchet,
+    // Read once per sender, then kept in memory and written behind. Every post
+    // used to wait on two IndexedDB round trips, and a page with no window
+    // cannot count on those settling, so one stall held up every later post.
+    // Two seconds at most: the clock beats the last ts anyway unless it jumped back.
+    getLastTs: () =>
+      lastTsCache ??
+      Promise.race([lastTsRead, new Promise((r) => setTimeout(() => r(lastTsCache ?? 0), 2000))]),
+    setLastTs: (ts) => {
+      seedLastTs(ts);
+      dbSet("lastSentTs", ts).catch(() => {});
+    },
+  });
+  if (sendWhenReady && state.sharing) {
+    sendWhenReady = false;
+    Promise.resolve().then(() => sendLoc(true));
+  }
+  poller = createPoller({
+    channelId: gen.channelId,
+    roster,
+    ratchet: gen.ratchet,
+    onChange: () => {
+      checkAlerts();
+      persistRatchet();
+      reconcileRoster().catch((e) => window.__starlingErrors.push(`roster: ${String(e)}`));
+      render();
+    },
+    onStatus: (s) => {
+      state.netStatus = s;
+      if (state.screen === "map") renderChrome();
+    },
+    onRetired: onRelayRetired,
+  });
+  if (!state.demo) poller.start();
+}
+
+// The relay answered 410: it no longer speaks this build's protocol. Going
+// quiet here would look exactly like an empty circle, so the app says so and
+// stops pretending to be connected.
+function onRelayRetired() {
+  state.retired = true;
+  teardownNet();
+  stopInviteWatch();
+  showNotice({
+    title: "Update Starling",
+    body: "The relay no longer speaks this version's protocol, so this app cannot connect and your circle cannot see you. Install the current version to get back on. Your circle and its keys are untouched on this device.",
+  });
+}
+
+// A pinned member's keys changed. The member id commits to both public keys,
+// so this is either a second preimage or a record written by an older
+// derivation, and the client cannot tell which. It never re-pins on its own:
+// the member's points are dropped, both safety numbers are kept, and a human
+// decides.
+async function onKeyChange(id, presented) {
+  const known = state.pinned.get(id);
+  if (keyChangeVerdict(known, presented) === "same") return;
+  state.keyChanges.set(id, await describeKeyChange({ known, presented, now: Date.now() }));
+  roster?.drop(id);
+  mapView?.removeMarker(id);
+  if (focusedId === id) unfocus();
+  ui.toast(t("{who}'s keys changed. Their location is hidden until you accept it.", { who: known?.name || t("A member") }), "warn");
+  // At peek the sheet body is inert and the warning would be invisible. The
+  // chrome banner shows either way; this puts the card itself in front too.
+  if (state.screen === "map" && sheet && sheet.getSnap() === "peek") sheet.snapTo("half");
+  render();
+}
+
+// The only way a key change is ever accepted, and it takes a human saying so
+// after comparing the new safety number out of band.
+async function acceptKeyChange(id) {
+  const change = state.keyChanges.get(id);
+  if (!change) return false;
+  const entry = await acceptedKeyChange({ known: state.pinned.get(id), presented: change.presented });
+  if (!entry) {
+    state.keyChanges.delete(id);
+    ui.toast("Those new keys are malformed. They were not accepted.", "warn");
+    render();
+    return false;
+  }
+  state.pinned.set(id, entry);
+  state.keyChanges.delete(id);
+  persistPinned();
+  render();
+  return true;
+}
+
+// Verification is local state: the protocol carries no verified bit, because a
+// bit an attacker controls the transport for is not evidence of anything.
+async function markVerified(id, verified = true) {
+  const rec = state.pinned.get(id);
+  if (!rec) return false;
+  state.pinned.set(id, { ...rec, verified: !!verified });
+  persistPinned();
+  render();
+  return true;
+}
+
+async function safetyNumberFor(id) {
+  const rec = id === state.identity?.memberId
+    ? { pk: b64uEncode(state.identity.pk), epk: b64uEncode(state.identity.epk) }
+    : state.pinned.get(id);
+  if (!rec) return null;
+  try {
+    return await safetyNumber(b64uDecode(rec.pk), b64uDecode(rec.epk));
+  } catch {
+    return null;
+  }
+}
+
+// ------------------------------------------------------------------ control
+
+// Control messages arriving on the circle's own channel, already decrypted and
+// already signature-checked against the key the sender's id commits to.
+async function onControl(senderId, msg, epoch) {
+  // No circle, nothing to control. The poller and its roster go with the
+  // generation, so this is the belt to their braces: a control message that
+  // was already in flight when the chain destroyed itself must not be read
+  // against a generation that is no longer there.
+  if (!state.gen) return;
+  // Locked means every key this device holds has been zeroed and the lock
+  // screen is up. Nothing arriving from the relay gets to start work that
+  // ends in a live circle. adoptRekey checks again for itself, because the
+  // lock can fall between here and there.
+  if (state.locked) return;
+  // A `member` record belongs to a welcome, on an invite channel, sealed to
+  // one joiner. On this channel it is an ordinary message any member can
+  // write, and acting on one grafts a keypair of their choosing onto every
+  // device's roster for good: removing the member who posted it does not
+  // remove the graft, because a re-key wraps to whoever is pinned. That is the
+  // one defence this threat model offers against a compromised member, so the
+  // record is refused here rather than filtered somewhere downstream.
+  if (circleControl(msg) !== "rekey") {
+    if (msg?.t === "member") window.__starlingErrors.push("member record on the circle channel: dropped");
+    return;
+  }
+  // A member admitted by the last re-key is pinned the first time they post,
+  // which is usually before they ever re-key. Converging here as well as on
+  // the poll means their first act can be a re-key without splitting the
+  // circle.
+  await reconcileRoster();
+  // A re-key has to come from a member this generation started with, not
+  // merely from someone in the pinned roster. The roster pins a member the
+  // first time a point of theirs verifies, and that pin happens inside the
+  // same ingest pass that then hands the control message over here, so
+  // "is pinned" on its own would be satisfied by a key we had never seen
+  // before this message. Accepting a generation from a key like that is the
+  // whole of the burgle-into-the-group attack, so it is refused: a stranger
+  // has to be admitted by a member, through a re-key somebody else signs,
+  // before anything they sign moves this circle.
+  if (!state.genRoster.has(senderId) || !state.pinned.has(senderId)) {
+    window.__starlingErrors.push("rekey from an unpinned member: dropped");
+    return;
+  }
+  if (msg.to !== state.identity.memberId) return; // somebody else's wrap
+  if (Number.isSafeInteger(msg.g) && msg.g > state.gen.g + 1) {
+    // The generation in between never reached us and its seed cannot be
+    // guessed, so this circle has moved on without this device. Say so; a
+    // fresh invitation is the only way back.
+    state.missedRekey = true;
+    render();
+    return;
+  }
+  const applied = await applyRekey({ identity: state.identity, gen: state.gen, msg, epoch, senderId });
+  if (!applied) return;
+  // Waits for the circle guard rather than bailing on it. A dropped re-key is
+  // not retried: the wrap is consumed, the poller will not hand it over twice,
+  // and this device would be left on a generation nobody else is on.
+  await withCircleGuardWaiting(() => adoptRekey(applied, senderId));
+}
+
+// Does this device now agree with the rotator about who is in the circle?
+// reconcileVerdict answers that; this is what the answer costs. Widening the
+// generation's roster is a write, and a disagreement that outlived its grace
+// is something a person has to be told.
+async function reconcileRoster() {
+  const p = state.rosterPending;
+  if (!p || !state.gen || !state.identity || state.locked) return false;
+  const verdict = await reconcileVerdict({
+    pinned: state.pinned.keys(),
+    self: state.identity.memberId,
+    pending: p,
+    now: Date.now(),
+  });
+  state.rosterPending = null;
+  if (verdict === "converged") {
+    state.genRoster = new Set(state.pinned.keys());
+    await persistGeneration();
+    render();
+    return true;
+  }
+  if (verdict === "wait") {
+    state.rosterPending = p;
+    return false;
+  }
+  state.rosterMismatch = { by: p.by, at: Date.now() };
+  ui.toast(t("{who} made new keys, but your list of members does not match theirs.", { who: displayName(p.by) }), "warn");
+  render();
+  return false;
+}
+
+// genRoster lives in the generation record, so widening it after an admission
+// is a write. It goes through the same staged path every other generation
+// write does, because the chain key and the record naming it may never be
+// written apart.
+async function persistGeneration() {
+  if (state.locked || !state.gen || circleBusy || state.chainDestroyed) return;
+  try {
+    await writeGenAtRest();
+  } catch (e) {
+    window.__starlingErrors.push(`genRoster: ${String(e)}`);
+  }
+}
+
+// Pin a member from a record carrying their keys, if admitPinned says the
+// record may be pinned. This is the write half: everything it refuses, and the
+// form it pins in, is decided in roster.js.
+//
+// Uncapped, and deliberately so for now. The records this reaches come out of
+// a welcome, whose own count is bounded when it is read, and adding an
+// occupancy bound here would change who lands in a roster on a path six review
+// rounds have not touched. The other two pinning paths carry their own cap and
+// this one has never had one; giving all three the same one is a change of
+// behaviour, so it is written down rather than smuggled in with a move.
+async function addPinned(rec) {
+  const verdict = await admitPinned({ pinned: state.pinned, rec, cap: Infinity });
+  if (!verdict.ok) return null;
+  // Already known, so nothing is written: a re-pin would drop whatever this
+  // person has since verified.
+  if (verdict.already) return verdict.entry;
+  state.pinned.set(verdict.memberId, verdict.entry);
+  persistPinned();
+  render();
+  return verdict.entry;
+}
+
+// ------------------------------------------------------------------- re-key
+
+const REKEY_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+// Everyone in a circle runs this timer, and two members re-keying in the same
+// breath would leave the circle split across two generations that cannot talk.
+// Each device therefore waits its own extra hour, derived from its member id,
+// and any re-key that arrives first resets the clock for everyone who receives
+// it. In practice one device does it and the rest never fire.
+function rekeyDue(now = Date.now()) {
+  if (!state.gen?.at || !state.identity) return false;
+  const jitter = (parseInt(state.identity.memberId.slice(0, 6), 16) % 3600) * 1000;
+  return now - state.gen.at > REKEY_INTERVAL_MS + jitter;
+}
+
+function startRekeyTimer() {
+  clearInterval(rekeyTimer);
+  rekeyTimer = setInterval(() => {
+    if (!rekeyDue() || circleBusy || state.locked || state.demo || !sender) return;
+    withCircleGuard(() => doRekey({ reason: "daily" })).catch(() => {});
+  }, 60000);
+}
+
+// Move the circle to a new generation, keeping the circle and its people.
+//
+// This replaces v1's rotation, which minted a whole new circle and left
+// everyone behind on a channel the rotator had walked away from. Here the
+// current chain key is mixed with fresh random bytes delivered to each retained
+// member over an ephemeral ECDH, so a relay cannot forge a generation and a
+// removed member cannot follow one.
+async function doRekey({ removed = [], admit = null, reason = "manual" } = {}) {
+  if (!state.gen || state.demo || state.locked || !sender) return null;
+  const recipients = rekeyRecipients({ pinned: state.pinned, removed, admit });
+
+  const built = await buildRekey({ identity: state.identity, gen: state.gen, recipients, removed, now: Date.now() });
+  if (!built) {
+    // The epoch we would have mixed from has already left the history window.
+    ui.toast("Could not make new keys right now. Try again in a moment.", "warn");
+    return null;
+  }
+
+  // The wraps go out on the CURRENT channel, and this is the last thing that
+  // ever happens there.
+  const results = await Promise.allSettled(built.posts.map((p) => sender.send(p)));
+  const failed = results.filter((r) => r.status === "rejected").length;
+  if (built.posts.length && failed === built.posts.length) {
+    // Nobody got the new material. Staying put is recoverable; moving would
+    // leave the whole circle behind.
+    zero(built.seed);
+    await noteSendFailure(results[0].reason);
+    ui.toast("Could not reach anyone with the new keys. Nothing changed.", "warn");
+    return null;
+  }
+  if (failed) {
+    ui.toast(t("{failed} of {total} members did not get the new keys yet.", { failed, total: built.posts.length }), "warn");
+  }
+
+  // The welcome needs the seed and openGeneration destroys it, so the copy is
+  // taken before the generation opens and zeroed by the caller.
+  const seedCopy = admit ? new Uint8Array(built.seed) : null;
+  const next = await openGeneration({
+    seed: built.seed,
+    g: built.g,
+    e0: built.e0,
+    historyEpochs: historyEpochs(),
+  });
+  next.at = Date.now();
+
+  const nextPinned = pinnedFromRecipients(recipients);
+
+  teardownNet();
+  const prev = state.gen;
+  const prevPinned = state.pinned;
+  const prevRoster = state.genRoster;
+  state.gen = next;
+  state.pinned = nextPinned;
+  state.genRoster = new Set(nextPinned.keys());
+  // The rotator wrapped to everyone itself, so there is nothing for it to
+  // reconcile against and no hash of somebody else's to hold on to.
+  state.rosterPending = null;
+  for (const id of removed) state.keyChanges.delete(id);
+  state.rosterMismatch = null;
+  state.missedRekey = false;
+  state.lastRekey = null;
+  lastSentPos = null;
+  resetMemberAlerts();
+  mapView?.clearAll();
+  // No window over a membership change: see startGraceWatch.
+  const watch =
+    removed.length || admit
+      ? null
+      : { by: state.identity.memberId, pinned: prevPinned, genRoster: prevRoster };
+  await commitGeneration(prev, watch);
+  await enterCircle();
+  void reason;
+  // Keyed entries, not bare values: a member pinned from the network is stored
+  // under its id and the record itself does not repeat it, and the welcome
+  // filters the joiner out of its own roster by id.
+  return { seed: seedCopy, members: [...nextPinned].map(([memberId, rec]) => ({ ...rec, memberId })) };
+}
+
+// Write the new generation down and drop the old one.
+//
+// The wraps are already on the relay by the time this runs, so everyone else
+// has moved and there is no going back to the old generation. If the write
+// fails the app keeps running on the new keys, because that is where the
+// circle is, and says plainly that a restart would strand this device: the
+// alternative is to look fine now and be silently alone after a reboot. The
+// old chain keys are only destroyed once the new ones are durable.
+async function commitGeneration(prev, watch) {
+  try {
+    await writeGenAtRest();
+    if (watch) {
+      startGraceWatch(prev, watch);
+    } else {
+      prev.ratchet.destroy();
+    }
+  } catch (e) {
+    window.__starlingErrors.push(`rekey persist: ${String(e)}`);
+    ui.toast(
+      "Your circle has new keys, but they could not be saved. If Starling restarts you will need a fresh invitation.",
+      "warn",
+    );
+  }
+}
+
+// How long the generation just left stays readable. Long enough for a
+// competing re-key to arrive on the old channel through one normal poll and be
+// judged, short enough that the old chain keys are gone well before the
+// ratchet's own history window would have dropped them.
+const REKEY_GRACE_MS = 5 * 60 * 1000;
+
+// Of two re-keys for the same generation, the one from the lower member id
+// wins. Any deterministic rule works as long as every device applies the same
+// one; ids are already unique, already known to everybody who can read either
+// wrap, and need nothing from the wire.
+const winnerOf = (a, b) => (a < b ? a : b);
+
+// Keep the generation this device just left, and keep reading the channel it
+// left, so a re-key that raced ours is not lost with it.
+//
+// Only ever opened for a re-key that changed nobody's membership. A member who
+// has just been removed still holds the old generation's keys and is still in
+// the roster the window remembers, so a window opened over a removal would let
+// them post a competing re-key on the old channel and be adopted back into the
+// circle by their own removal. Losing the race and splitting is the bug being
+// fixed here; undoing a removal is worse than the bug.
+function startGraceWatch(prev, { by, pinned, genRoster }) {
+  endGraceWatch();
+  if (state.demo || state.locked || !state.identity) {
+    prev.ratchet.destroy();
+    return;
+  }
+  grace = { gen: prev, by, pinned, genRoster, until: Date.now() + REKEY_GRACE_MS };
+  // A read-only view of the roster as it was: the grace roster must not pin
+  // anyone into the live circle, and nothing it learns outlives the window.
+  const graceStore = {
+    get: (id) => grace?.pinned.get(id),
+    set: (id, rec) => grace?.pinned.set(id, canonPinned(rec)),
+    get size() {
+      return grace ? grace.pinned.size : 0;
+    },
+  };
+  graceRoster = createRoster({
+    channelId: prev.channelId,
+    ratchet: prev.ratchet,
+    selfId: state.identity.memberId,
+    pinned: graceStore,
+    onControl: onGraceControl,
+    onKeyChange: () => {},
+  });
+  gracePoller = createPoller({
+    channelId: prev.channelId,
+    roster: graceRoster,
+    ratchet: prev.ratchet,
+    onChange: () => {},
+    onStatus: () => {},
+    onRetired: () => endGraceWatch(),
+  });
+  gracePoller.start();
+  graceTimer = setTimeout(endGraceWatch, REKEY_GRACE_MS);
+}
+
+function endGraceWatch() {
+  clearTimeout(graceTimer);
+  graceTimer = 0;
+  gracePoller?.stop();
+  gracePoller = null;
+  graceRoster = null;
+  if (grace) {
+    grace.gen.ratchet.destroy();
+    grace = null;
+  }
+}
+
+// A re-key arriving on the channel this device has already left. It is only
+// ever one thing: somebody who was working from the same generation rotated at
+// the same moment we did. Both are valid, so the tie-break decides, and the
+// loser moves rather than sitting alone on a generation nobody else is on.
+async function onGraceControl(senderId, msg, epoch) {
+  if (!grace || !state.gen || state.locked) return;
+  if (Date.now() > grace.until) return;
+  if (circleControl(msg) !== "rekey") return;
+  if (msg.to !== state.identity.memberId) return;
+  // The same bar the live channel sets: a generation only moves for a member
+  // it started with, never for a key that arrived with the message.
+  if (!grace.genRoster.has(senderId) || !grace.pinned.has(senderId)) {
+    window.__starlingErrors.push("rekey from an unpinned member on the old channel: dropped");
+    return;
+  }
+  if (senderId === grace.by) return; // our own wrap coming back to us
+  const applied = await applyRekey({ identity: state.identity, gen: grace.gen, msg, epoch, senderId });
+  if (!applied) return;
+  // A re-key that takes somebody out beats one that does not, whatever the ids
+  // say. Otherwise a removal that lost a coin toss would be dropped on the
+  // floor and the member it removed would stay in half the circle. Anyone who
+  // can send this could have removed the same member on the live channel a
+  // second earlier, so it is no new power.
+  if (!applied.removed.length && winnerOf(senderId, grace.by) !== senderId) {
+    zero(applied.seed);
+    return; // ours won, stay put
+  }
+  await withCircleGuardWaiting(() => adoptOverLoser(applied, senderId));
+}
+
+// Rewind to the generation both rotators worked from, then take the winner's
+// re-key through the ordinary path. Starting anywhere else would run the
+// roster maths against the loser's idea of the circle rather than the one the
+// winner wrapped to.
+async function adoptOverLoser(applied, senderId) {
+  if (!grace || !state.gen || state.locked) {
+    zero(applied.seed);
+    return false;
+  }
+  const losing = state.gen;
+  const held = grace;
+  // The watch is over either way: its generation becomes the live one for the
+  // length of the adoption, and adoptRekey opens a fresh window of its own.
+  clearTimeout(graceTimer);
+  graceTimer = 0;
+  gracePoller?.stop();
+  gracePoller = null;
+  graceRoster = null;
+  grace = null;
+  teardownNet();
+  state.gen = held.gen;
+  state.pinned = held.pinned;
+  state.genRoster = held.genRoster;
+  losing.ratchet.destroy();
+  lastSentPos = null;
+  return adoptRekey(applied, senderId);
+}
+
+// Apply a re-key somebody else signed. The generation is sound whatever the
+// roster says, so a membership disagreement is surfaced rather than resolved:
+// one side is looking at a circle the other is not, and only a person can say
+// which is right.
+async function adoptRekey(applied, senderId) {
+  // The app locked while this re-key was being opened, and the lock screen is
+  // now up with every key zeroed. Adopting it would open a fresh generation
+  // and call enterCircle, which puts the map and everyone's position back on
+  // screen without a passcode: the lock bypassed, not a re-key applied.
+  // doRekey and completeJoin have always refused here; this path did not.
+  //
+  // Refusing does not cost the re-key. Locking destroyed the roster and its
+  // dedup set along with the poller, so the relay serves the same wrap again
+  // to the poller the next unlock builds, and the seed goes now rather than
+  // sit in memory behind a lock screen.
+  if (state.locked) {
+    zero(applied.seed);
+    return false;
+  }
+  // Names first: teardownNet below takes the roster with it, and the people
+  // being removed leave the pinned map a few lines later.
+  const senderName = displayName(senderId, "Someone");
+  const removedNames = applied.removed.map((id) => displayName(id, "a member"));
+  const { pinned: nextPinned, view: ours } = rosterAfterRekey({
+    pinned: state.pinned,
+    removed: applied.removed,
+    self: state.identity.memberId,
+    by: senderId,
+  });
+  const agrees = await rosterAgrees(applied.rh, ours);
+
+  const next = await openGeneration({
+    seed: applied.seed,
+    g: applied.g,
+    e0: applied.e0,
+    historyEpochs: historyEpochs(),
+  });
+  next.at = Date.now();
+
+  teardownNet();
+  const prev = state.gen;
+  const prevPinned = state.pinned;
+  const prevRoster = state.genRoster;
+  state.gen = next;
+  state.pinned = nextPinned;
+  state.genRoster = new Set(nextPinned.keys());
+  for (const id of applied.removed) state.keyChanges.delete(id);
+  state.rosterMismatch = null;
+  // reconcileRoster resolves this or surfaces it. The hash it reconciles
+  // against is the rotator's own, sealed inside the wrap, so nobody else could
+  // have written it.
+  state.rosterPending = pendingAfterRekey({ agrees, rh: applied.rh, by: senderId, now: Date.now() });
+  state.missedRekey = false;
+  state.lastRekey = { byName: senderName, removedNames, at: Date.now() };
+  lastSentPos = null;
+  resetMemberAlerts();
+  mapView?.clearAll();
+  // Same bar as the rotator's side, plus one: a roster this device does not
+  // agree with is a membership question the window must not answer by itself.
+  const watch =
+    applied.removed.length || !agrees
+      ? null
+      : { by: senderId, pinned: prevPinned, genRoster: prevRoster };
+  await commitGeneration(prev, watch);
+  await enterCircle();
+  if (removedNames.length === 1) {
+    ui.toast(t("{who} removed {gone}.", { who: senderName, gone: removedNames[0] }));
+  } else if (removedNames.length) {
+    ui.toast(t("{who} removed {n} people from the circle.", { who: senderName, n: removedNames.length }));
+  } else {
+    ui.toast(t("{who} changed the keys.", { who: senderName }));
+  }
+  render();
+  return true;
+}
+
+// The three things stage 2 calls. Each is a real re-key: the circle survives
+// and its people come with it.
+// Returns true only when the circle actually moved to a new generation, so a
+// sheet cannot claim a re-key that did not happen.
+const rekeyCircle = () => withCircleGuard(async () => (await doRekey({ reason: "manual" })) !== null);
+const removeMember = (memberId) =>
+  withCircleGuard(async () => {
+    if (!state.pinned.has(memberId)) return null;
+    const out = await doRekey({ removed: [memberId], reason: "remove" });
+    if (out) {
+      roster?.drop(memberId);
+      mapView?.removeMarker(memberId);
+      if (focusedId === memberId) unfocus();
+    }
+    return out;
+  });
+
+async function persistCircle() {
+  // Identity first, generation last. This is a NEW circle's first landing
+  // (create, join) and its identity exists nowhere else, so a crash between
+  // the two writes must resolve as "the change never happened": an old chain
+  // key with a fresh, never-used identity is a cosmetic stray, while the
+  // reverse would announce an existing pseudonym on the new channel and link
+  // the two circles. It also has to hold because writeGenAtRest stages the
+  // generation as one record that boot will apply: the identity it belongs to
+  // must already be on disk when that record appears. Switch and leave keep
+  // the opposite order in circles.js writeActive, where the array holds the
+  // paired copy.
+  await dbSet("identity", {
+    alg: state.identity.alg,
+    privateKey: state.identity.privateKey,
+    pk: state.identity.pk,
+    ecdhPrivate: state.identity.ecdhPrivate,
+    epk: state.identity.epk,
+    memberId: state.identity.memberId,
+  });
+  await dbSet("lastSentTs", 0);
+  // One invite slot, and this circle has not minted anything yet. The previous
+  // circle's live credential does not get to sit in it: the watch would answer
+  // that link on this circle's behalf and admit a stranger to it.
+  await writeRecordAtRest(kv, lockCtx(), INVITE_SLOT, null);
+  await writeGenAtRest();
+}
+
+// The chain key is the crown jewel. With app lock on it is written only sealed
+// under the in-memory vault key; with lock off it is stored as bytes, same as
+// an unlocked phone's other app data. Exactly one form is ever on disk.
+async function writeSecretAtRest(ck) {
+  return writeChainKey(lockCtx(), ck);
+}
+
+async function writeChainKey(lock, ck) {
+  // May this be written, and under which key. atRestForm is the one place that
+  // answers it, including the fail-closed half: with the lock on and no usable
+  // vault key we are locked or mid-teardown, and the crown jewel does not get
+  // written in either form.
+  const form = atRestForm(lock);
+  if (!form.ok) throw new Error("locked: refusing to write the chain key");
+  if (form.sealed) {
+    await dbSet("vaultSecret", await sealUnderVault(form.vaultKey, ck));
+    await dbDel("secret");
+  } else {
+    await dbSet("secret", ck);
+    await dbDel("vaultSecret");
+  }
+}
+
+// Places follow the chain key's at-rest rule: sealed under the vault key
+// while the lock is on, plaintext otherwise, exactly one form on disk. They
+// are location data (someone's home, someone's school), so a lock that
+// protects the chain key while leaving these readable would be a lock with a
+// window next to it.
+async function writePlacesAtRest() {
+  const form = atRestForm(lockCtx());
+  if (!form.ok) throw new Error("locked: refusing to write places");
+  if (form.sealed) {
+    await dbSet(
+      "vaultPlaces",
+      await sealUnderVault(form.vaultKey, te.encode(JSON.stringify(state.places))),
+    );
+    await dbDel("places");
+  } else {
+    await dbSet("places", state.places);
+    await dbDel("vaultPlaces");
+  }
+}
+
+// Load places for this session, sweeping residue from interrupted lock
+// transitions: a plaintext copy found while the lock is on is adopted and
+// resealed (it was honest data before the lock flipped, and leaving it
+// readable is the one wrong answer), and a sealed copy found with the lock
+// off is unreadable forever and deleted.
+async function loadPlaces() {
+  const form = atRestForm(lockCtx());
+  if (!form.ok) return;
+  let list = null;
+  if (form.sealed) {
+    const blob = await dbGet("vaultPlaces");
+    if (blob) {
+      const bytes = await openUnderVault(form.vaultKey, blob);
+      if (bytes) {
+        try {
+          list = JSON.parse(new TextDecoder().decode(bytes));
+        } catch {
+          list = null;
+        }
+      }
+    }
+    const stray = await dbGet("places");
+    if (stray !== undefined && stray !== null) {
+      if (!list) list = stray;
+      state.places = sanitizePlaces(list);
+      await writePlacesAtRest();
+    } else {
+      state.places = sanitizePlaces(list);
+    }
+  } else {
+    list = await dbGet("places");
+    state.places = sanitizePlaces(list);
+    if (await dbGet("vaultPlaces")) await dbDel("vaultPlaces");
+  }
+  placeTracker.setPlaces(state.places);
+  mapView?.setPlaces(state.places);
+}
+
+// Persist and repaint after any edit to the list.
+async function savePlaces() {
+  placeTracker.setPlaces(state.places);
+  mapView?.setPlaces(state.places);
+  try {
+    await writePlacesAtRest();
+  } catch (e) {
+    window.__starlingErrors.push(`places: ${String(e)}`);
+  }
+  render();
+}
+
+function addPlace(name, lat, lon) {
+  state.places = [
+    ...state.places,
+    { id: newPlaceId(), name, lat, lon, radius: DEFAULT_RADIUS },
+  ];
+  return savePlaces();
+}
+
+// The members this generation opened with, as written down with it, read out
+// of a record that may predate the field.
+function adoptGenRoster(meta) {
+  return genRosterFrom(meta, state.pinned.keys());
+}
+
+// An invitation only belongs to the circle whose identity minted it. There is
+// one invite slot on this device and there can be several circles, so a
+// credential that names another identity is somebody else's live link and is
+// dropped rather than answered.
+function scopedInvite(inv, identity) {
+  if (!inv) return null;
+  if (!inviteMintedBy(inv, identity?.memberId)) {
+    zero(inv.secret);
+    return null;
+  }
+  return inv;
+}
+
+// A live generation rebuilt from disk. The chain key that survives is the
+// oldest one still inside the history window, and ckEpoch is the epoch it
+// belongs to; the generation's own e0 is older than that and is kept only
+// because it names the generation.
+function restoreGeneration(meta, ck) {
+  return {
+    g: meta.g,
+    e0: meta.e0,
+    at: meta.at,
+    channelId: meta.channelId,
+    ratchet: createRatchet({ e0: meta.ckEpoch, ck0: ck, historyEpochs: historyEpochs() }),
+  };
+}
+
+// Finish a generation write that a crash interrupted. The staged record is the
+// newer generation and the identity it belongs to was already on disk when it
+// was staged, so applying it is always the repair.
+async function applyStagedGen(lock) {
+  let raw;
+  try {
+    raw = await readRecordAtRest(kv, lock, STAGED_SLOT);
+  } catch (e) {
+    // A record that will not authenticate is not the same as one that is not
+    // there, and the storage layer says so by throwing rather than by
+    // returning nothing. Park it rather than delete it, the same way an
+    // unreadable circle array is parked, so a damaged install can still be
+    // looked at instead of being quietly destroyed.
+    if (isSealedRecordError(e)) {
+      const blob = await dbGet(STAGED_SLOT.sealed);
+      if (blob) await dbSet("vaultGenNextCorrupt", blob).catch(() => {});
+      await writeRecordAtRest(kv, lock, STAGED_SLOT, null).catch(() => {});
+    }
+    return;
+  }
+  if (raw === null || raw === undefined) return;
+  const staged = readStagedGen(raw);
+  if (!staged) {
+    await writeRecordAtRest(kv, lock, STAGED_SLOT, null).catch(() => {});
+    return;
+  }
+  await writeRecordAtRest(kv, lock, GEN_SLOT, packGenMeta(staged));
+  await writeRecordAtRest(kv, lock, PINNED_SLOT, staged.pinned);
+  await writeChainKey(lock, staged.ck);
+  await writeRecordAtRest(kv, lock, STAGED_SLOT, null);
+}
+
+// Everything the active slots hold, after any interrupted generation write has
+// been finished. `ck` is the caller's chain key and is only a fallback: a
+// staged record may have replaced it a moment ago, so the slot is re-read.
+async function readActiveSlots(lock, ck) {
+  await applyStagedGen(lock);
+  let fresh = ck;
+  const form = atRestForm(lock);
+  if (form.sealed) {
+    const sealed = await dbGet("vaultSecret");
+    // The same question the writers ask, in the reading direction: a sealed
+    // record with no usable key behind it is not something to open, it is a
+    // session that has no business holding the chain key at all.
+    if (sealed && !form.ok) throw new Error("locked: refusing to read the chain key");
+    const opened = sealed ? await openUnderVault(form.vaultKey, sealed) : null;
+    if (opened) fresh = opened;
+  } else {
+    const plain = await dbGet("secret");
+    if (plain) fresh = plain;
+  }
+  const [identity, meta, pinned, invite] = await Promise.all([
+    dbGet("identity"),
+    readRecordAtRest(kv, lock, GEN_SLOT),
+    readRecordAtRest(kv, lock, PINNED_SLOT),
+    readRecordAtRest(kv, lock, INVITE_SLOT),
+  ]);
+  return {
+    ck: fresh,
+    identity,
+    meta: readGenMeta(meta === undefined ? null : meta),
+    pinned: pinned === undefined ? [] : pinned,
+    invite: invite === undefined ? null : invite,
+  };
+}
+
+// Adopt an active circle read off disk into memory.
+function adoptActive({ ck, identity, meta, pinned, invite }) {
+  state.identity = identity;
+  state.gen = restoreGeneration(meta, ck);
+  // Canonical on the way in too. A roster written by an older build holds
+  // whatever the relay spelled at the time, and a member whose record comes
+  // back spelled differently from the live one is the same false alarm on the
+  // first launch after an update.
+  state.pinned = new Map([...pinnedMap(pinned)].map(([id, rec]) => [id, canonPinned(rec)]));
+  state.genRoster = adoptGenRoster(meta);
+  state.invite = scopedInvite(readInvite(invite), identity);
+  storedCkEpoch = meta.ckEpoch;
+}
+
+// v1 wrote a circle root under `secret` and no generation record at all. That
+// root is not a chain key, it names no v2 channel, and a v1 client cannot talk
+// to a v2 relay in the first place, so there is nothing honest to migrate. Say
+// so out loud and offer the eraser: a silent failure here would look exactly
+// like a circle where nobody ever posts.
+function showV1Notice() {
+  state.v1Data = true;
+  showNotice({
+    title: "Start fresh",
+    body: "This device holds a circle from an older version of Starling. The encryption changed, and old circles cannot be carried across: the keys mean different things now. Erase this device's Starling data and create or join a circle again. Nothing was sent anywhere.",
+    actions: [{ label: "Erase and start over", variant: "btn-primary", testid: "notice-action", onClick: panic }],
+  });
+}
+
+// ------------------------------------------------------------------ app lock
+
+let lockTimer = 0;
+let lockWired = false;
+let hiddenAt = 0;
+
+function clearLockTimer() {
+  clearTimeout(lockTimer);
+  lockTimer = 0;
+}
+let damagedAtRest = false;
+
+// Lock transitions rewrite the same slots the circle mutations do, so they
+// take the same guard, and memory adopts the new lock state only AFTER the
+// at-rest transition commits: a thrown storage op must never leave the
+// session believing one thing while the disk says another, because the next
+// mutation would then persist in the wrong form and boot's stray purge would
+// finish the loss.
+async function enableLock(passcode) {
+  if (!state.gen) return false;
+  if (!takeCircleGuard()) return false;
+  try {
+    const K = newVaultKey();
+    const pass = await makePasscodeRecord(passcode, K);
+    const lockRecord = { enabled: true, autolockMs: 60000, pass, bio: null };
+    const rec = genRecord();
+    try {
+      // Ordering lives in circles.js so the crash-window tests can drive it:
+      // sealed forms durable before the lock record flips, plaintext deleted
+      // only after, and a throw unwinds back to the unlocked form.
+      await enableLockTransition(kv, {
+        vaultKey: K,
+        lockRecord,
+        secret: rec.ck,
+        circles: state.circles,
+        genMeta: packGenMeta(rec),
+        pinned: packPinned(state.pinned),
+        invite: packInvite(state.invite),
+      });
+    } catch (e) {
+      zero(K);
+      throw e;
+    }
+    state.vaultKey = K;
+    state.lock = lockRecord;
+    storedCkEpoch = rec.ckEpoch;
+    // Places flip to the sealed form with the rest. A crash before this line
+    // leaves a plaintext copy behind; loadPlaces sweeps that up at the next
+    // unlock by adopting and resealing it.
+    await writePlacesAtRest().catch((e) => {
+      window.__starlingErrors.push(`places: ${String(e)}`);
+    });
+    return true;
+  } finally {
+    releaseCircleGuard();
+  }
+}
+
+async function disableLock(passcode) {
+  if (!state.gen) return false;
+  const K = await openPasscodeRecord(state.lock.pass, passcode);
+  if (!K) return false;
+  zero(K);
+  if (!takeCircleGuard()) return false;
+  try {
+    // Mirror image of enableLock: plaintext forms first, the lock record
+    // next, the stale sealed copies last. The transition resolves only when
+    // the lock record is genuinely gone from disk; until then memory keeps
+    // the vault key and stays locked-consistent.
+    const rec = genRecord();
+    await disableLockTransition(kv, {
+      secret: rec.ck,
+      circles: state.circles,
+      genMeta: packGenMeta(rec),
+      pinned: packPinned(state.pinned),
+      invite: packInvite(state.invite),
+    });
+    storedCkEpoch = rec.ckEpoch;
+    zero(state.vaultKey);
+    state.vaultKey = null;
+    state.lock = null;
+    // Back to the plaintext form, and the sealed copy off the disk: with the
+    // lock gone it could never be opened again anyway.
+    await writePlacesAtRest().catch((e) => {
+      window.__starlingErrors.push(`places: ${String(e)}`);
+    });
+    return true;
+  } finally {
+    releaseCircleGuard();
+  }
+}
+
+async function changePasscode(oldPc, newPc) {
+  const K = await openPasscodeRecord(state.lock.pass, oldPc);
+  if (!K) return false;
+  // A new passcode that collides with the duress code would wipe the device
+  // at the next unlock. Refused here, where the person can still pick again.
+  if (state.lock.duress && (await matchesDuress(state.lock.duress, newPc))) {
+    zero(K);
+    ui.toast("That is your duress passcode. Pick a different one.", "warn");
+    return false;
+  }
+  state.lock = { ...state.lock, pass: await makePasscodeRecord(newPc, K) };
+  await dbSet("lock", state.lock);
+  zero(K);
+  return true;
+}
+
+// The duress passcode: a second code that, entered on the lock screen, runs
+// the panic wipe instead of unlocking. Setting one that also unlocks is
+// refused: the two must never be the same keystrokes.
+async function setDuress(pc) {
+  if (!state.lock?.enabled) return false;
+  const K = await openPasscodeRecord(state.lock.pass, pc);
+  if (K) {
+    zero(K);
+    ui.toast("That is your unlock passcode. A duress code has to be different.", "warn");
+    return false;
+  }
+  state.lock = { ...state.lock, duress: await makeDuressRecord(pc) };
+  await dbSet("lock", state.lock);
+  return true;
+}
+
+async function clearDuress() {
+  if (!state.lock) return;
+  state.lock = { ...state.lock, duress: null };
+  await dbSet("lock", state.lock);
+}
+
+async function enableBiometric() {
+  if (!state.vaultKey) return false;
+  const rec = await makeBioRecord(state.vaultKey);
+  if (!rec) return false;
+  state.lock = { ...state.lock, bio: rec };
+  await dbSet("lock", state.lock);
+  return true;
+}
+
+async function disableBiometric() {
+  state.lock = { ...state.lock, bio: null };
+  await dbSet("lock", state.lock);
+}
+
+async function setAutolock(ms) {
+  state.lock = { ...state.lock, autolockMs: ms };
+  await dbSet("lock", state.lock);
+}
+
+// Unlock recovers the vault key by one of the two paths, decrypts the sealed
+// secret, and enters the circle. Returns false on a wrong passcode or a failed
+// biometric so the lock screen can say so; the sealed secret never leaves disk
+// until a path actually authenticates.
+//
+// The vault key is zeroed on EVERY exit that is not a completed unlock, the
+// thrown ones included. A sealed record that will not authenticate makes
+// readActiveSlots throw, and state.vaultKey is assigned before that call, so
+// without this the lock screen came back with the key still live in memory:
+// the wrong-passcode path wiped it and the damaged-install path, which is the
+// one a seizer can create by corrupting a byte, did not. The lock is worth
+// what the process holds after it, and after a failed unlock that has to be
+// nothing.
+async function unlockWith(recoverKey) {
+  const K = await recoverKey();
+  if (!K) return false;
+  let unlocked = false;
+  try {
+    unlocked = await openVaultWith(K);
+    return unlocked;
+  } finally {
+    if (!unlocked) {
+      zero(K);
+      state.vaultKey = null;
+    }
+  }
+}
+
+// The inactive array, read the way the recovery paths have to read it: a blob
+// that will not authenticate under a key that just opened the passcode record
+// is corrupt or tampered, and dropping it beats refusing the unlock, but the
+// bytes are parked under a quarantine key first so a transient fault stays
+// recoverable instead of being overwritten by the next persist. In these
+// shapes it can be the only copy of every circle left on the device.
+async function readInactiveAtRest(lock) {
+  const read = await readCirclesAtRest(kv, lock);
+  if (read !== null) return read;
+  const blob = await dbGet("vaultCircles");
+  if (blob) await dbSet("vaultCirclesCorrupt", blob).catch(() => {});
+  ui.toast("Your other circles could not be read and were dropped.", "warn");
+  return [];
+}
+
+// The body of an unlock, once a key has been recovered. Split out so the
+// zeroing above covers every way out of it, including the ways it throws.
+async function openVaultWith(K) {
+  const lock = { enabled: true, vaultKey: K };
+  const sealed = await dbGet("vaultSecret");
+  if (!sealed) {
+    // Which of the ways this happened decides everything below, so the disk is
+    // read before anything is repaired. unlockVerdict holds why each shape
+    // means what it means.
+    const destroyed = !!(await dbGet(DESTROYED_KEY).catch(() => null));
+    // The plaintext slots are read only when there is no mark. A device that
+    // destroyed itself is being resumed rather than repaired, and it is the
+    // device class whose store fails: an unguarded read that throws there
+    // would come back as "wrong passcode" on a passcode that was right.
+    const [plainSecret, plainIdentity, plainCircles] = destroyed
+      ? [null, null, null]
+      : await Promise.all([dbGet("secret"), dbGet("identity"), dbGet("circles")]);
+    const found = unlockVerdict({ sealed: false, opened: false, destroyed, plainSecret, plainIdentity });
+    if (found.kind === "resume-destroyed") {
+      state.vaultKey = K;
+      const inactive = await readInactiveAtRest(lock);
+      // Nothing is unsealed into plaintext and nothing touches the lock: the
+      // vault key stays live and the remaining circles stay sealed under it.
+      //
+      // The leave here is the same one the destruct itself runs, not a second
+      // copy of it. On a device whose destruct finished, it walks over slots
+      // that are already empty and costs a handful of deletes; on one written
+      // by a build whose destruct only erased the chain key, it is the leave
+      // finally being made, which is how the keypair and the circle name that
+      // build left behind come off the disk. Either way it runs before the
+      // session calls itself unlocked.
+      const promoted = await leaveDestroyedCircle(inactive);
+      state.locked = false;
+      clearLockTimer();
+      if (promoted) await enterCircle();
+      else showDestroyedNotice();
+      render();
+      return true;
+    }
+    // The passcode is right but there is no sealed chain key at all: a crash
+    // mid last-circle leave, or mid recovery, took the sealed slots and left
+    // the lock record behind. This is the repair, and it is the one path that
+    // takes the lock off, because a leave is something the person asked for.
+    if (found.kind === "restore-plaintext") {
+      zero(K);
+      state.locked = false;
+      state.lock = null;
+      state.vaultKey = null;
+      clearLockTimer();
+      await dbDel("lock");
+      const slots = await readActiveSlots(null, plainSecret);
+      if (slotsVerdict({ identity: plainIdentity, meta: slots.meta }).kind === "v1") {
+        showV1Notice();
+        return true;
+      }
+      adoptActive({ ...slots, identity: plainIdentity });
+      state.circleName = (await dbGet("circleName")) || state.circleName;
+      state.circleShare = packShare(await dbGet("circleShare"));
+      const arr = Array.isArray(plainCircles) ? plainCircles : [];
+      state.circles = reconcileCircles({
+        activeSecret: slots.ck,
+        activeMemberId: plainIdentity.memberId,
+        circles: arr,
+      });
+      if (state.circles.length !== arr.length) await persistCirclesAtRest().catch(() => {});
+      await enterCircle();
+      return true;
+    }
+    // Reading the array is not free: an unreadable blob is quarantined and the
+    // person is told about it. So the question is asked again with the count
+    // in hand, because an array nobody has read yet is not an empty one.
+    const inactive = await readInactiveAtRest(lock);
+    zero(K);
+    state.locked = false;
+    state.lock = null;
+    state.vaultKey = null;
+    clearLockTimer();
+    const stray = unlockVerdict({
+      sealed: false,
+      opened: false,
+      destroyed,
+      plainSecret,
+      plainIdentity,
+      circles: inactive.length,
+    });
+    if (stray.kind === "promote-circles") {
+      state.circles = inactive.slice(1);
+      applyActive(inactive[0]);
+      // Plaintext forms first, the lock record last: a crash in between
+      // lands back in this recovery, which now reads plaintext first.
+      await dbSet("circleName", state.circleName);
+      await dbSet("circleShare", state.circleShare);
+      await persistCircle();
+      await persistCirclesAtRest();
+      await dbDel("lock");
+      await enterCircle();
+      return true;
+    }
+    for (const k of SEALED_KEYS) await dbDel(k);
+    await dbDel("lock");
+    showScreen("onboarding");
+    return true;
+  }
+  const ck = await openUnderVault(K, sealed);
+  // The sealed chain key is the verifier. It did not open, so this is a wrong
+  // passcode or a failed biometric and nothing on disk is touched over it.
+  if (unlockVerdict({ sealed: true, opened: !!ck }).kind === "wrong-passcode") {
+    zero(K);
+    return false;
+  }
+  state.vaultKey = K;
+  let slots;
+  try {
+    slots = await readActiveSlots(lock, ck);
+  } catch (e) {
+    // The chain key opened but the records naming it did not. This is the
+    // damaged-install exit, and the chain key is the crown jewel, so it does
+    // not get to sit in memory behind the lock screen any more than the vault
+    // key does.
+    zero(ck);
+    throw e;
+  }
+  const inSlots = slotsVerdict(slots);
+  if (inSlots.kind === "no-identity") {
+    zero(K);
+    state.vaultKey = null;
+    return false;
+  }
+  // A locked install written by v1 has a sealed secret and no generation
+  // record. It opens fine and means nothing, so say so rather than entering a
+  // circle that can never talk to anyone.
+  if (inSlots.kind === "v1") {
+    zero(K);
+    state.vaultKey = null;
+    state.locked = false;
+    clearLockTimer();
+    showV1Notice();
+    return true;
+  }
+  adoptActive(slots);
+  // The inactive circles ride the same vault key. A blob that will not
+  // authenticate under a K that just opened the active chain key is corrupt or
+  // tampered; dropping it beats refusing the unlock, and the user hears it.
+  // The unreadable blob itself is parked under a quarantine key first, so a
+  // transient fault stays recoverable instead of being overwritten by the
+  // next persist.
+  const inactive = await readCirclesAtRest(kv, lock);
+  if (inactive === null) {
+    const blob = await dbGet("vaultCircles");
+    if (blob) await dbSet("vaultCirclesCorrupt", blob).catch(() => {});
+    state.circles = [];
+    ui.toast("Your other circles could not be read and were dropped.", "warn");
+  } else {
+    // A torn writeActive can pair this chain key with another circle's
+    // identity or another circle's generation; the array still holds the
+    // properly paired record, so adopt it before anything announces the wrong
+    // pseudonym or posts under a key that channel cannot read.
+    const paired = adoptPairedCircle({
+      activeSecret: slots.ck,
+      activeMemberId: state.identity.memberId,
+      activeGen: state.gen,
+      circles: inactive,
+    });
+    if (paired) {
+      applyActive(paired);
+      await dbSet("identity", paired.identity);
+      await dbSet("circleName", paired.name);
+      await dbSet("circleShare", state.circleShare);
+      if (paired.profile) await dbSet("profile", paired.profile);
+      await writeGenAtRest();
+    }
+    // A crash mid-switch while locked can leave the active circle duplicated
+    // in the sealed array, same as the unlocked boot path; reconcile it here
+    // with the same both-must-match rule.
+    state.circles = reconcileCircles({
+      activeSecret: state.gen.ratchet.snapshot().ck0,
+      activeMemberId: state.identity.memberId,
+      circles: inactive,
+    });
+    if (state.circles.length !== inactive.length) await persistCirclesAtRest();
+  }
+  state.locked = false;
+  clearLockTimer();
+  await enterCircle();
+  return true;
+}
+
+// Drop every key from memory, tear down the live circle, and show the lock
+// screen. After this the process holds no plaintext secret or vault key.
+function lockNow() {
+  if (!state.lock?.enabled || state.locked) return;
+  // A circle mutation is mid-write: zeroing the vault key and the secrets it
+  // is sealing with would corrupt what lands on disk. Lock the moment the
+  // guard releases instead.
+  if (circleBusy) {
+    lockPending = true;
+    return;
+  }
+  clearLockTimer();
+  hiddenAt = 0;
+  if (state.sharing) {
+    // Only when the person is back and the lock cannot wait; lockAway ends it first otherwise.
+    noteLockEnded();
+    // Caption first, so the bye goes out clean rather than carrying a stale
+    // claim into the last message anyone sees from this device.
+    clearCaption();
+    sendMsg("bye").catch(() => {});
+    stopSharingInternals();
+  }
+  // The retry line holds nothing across a lock: what a locked device must
+  // not act on, it forgets.
+  outbox.clear();
+  // Before the pollers, for the same reason the vault key goes: a generation
+  // being held open for a re-key race is chain keys, and a locked device holds
+  // none.
+  endGraceWatch();
+  poller?.stop();
+  poller = null;
+  sender?.cancel?.();
+  sender = null;
+  roster = null;
+  stopInviteWatch();
+  stopJoinWatch();
+  if (state.joining) zero(state.joining.secret);
+  state.joining = null;
+  clearInterval(rekeyTimer);
+  // The beacon holds its own key and its own sender; locking drops keys, so
+  // it goes too rather than outliving the screen that can switch it off.
+  beacon?.end().catch(() => {});
+  beacon = null;
+  sosViewer = null;
+  zero(state.vaultKey);
+  // destroy() zeroes every retained chain key inside the ratchet, which is the
+  // whole of what this device can decrypt with.
+  state.gen?.ratchet.destroy();
+  for (const c of state.circles) zero(c.secret);
+  if (state.invite) zero(state.invite.secret);
+  state.circles = [];
+  state.vaultKey = null;
+  state.gen = null;
+  state.pinned = new Map();
+  state.genRoster = new Set();
+  state.rosterPending = null;
+  state.joinedVia = null;
+  state.joinIncomplete = null;
+  state.chainDestroyed = false;
+  state.chainWipeFailed = null;
+  state.invite = null;
+  state.joinRequests = [];
+  state.keyChanges.clear();
+  // The card explaining that a circle expired is state about a circle, and the
+  // lock screen exists so that none of that is readable. It comes back on the
+  // next unlock, because the mark that raises it is still on disk: only a
+  // person dismissing the card spends that, and locking the screen is not a
+  // person reading anything.
+  state.chainWiped = null;
+  storedCkEpoch = -1;
+  state.me = null;
+  focusedId = null;
+  resetMemberAlerts();
+  state.locked = true;
+  // Drop decrypted member positions from the map and dismiss any open sheet so
+  // nothing sensitive sits behind the lock screen.
+  ui.closeAllOverlays();
+  mapView?.clearAll();
+  $("#focus-card").hidden = true;
+  ensureLockUI();
+  paintLockScreen();
+  showScreen("lock");
+}
+
+function paintLockScreen() {
+  const bioBtn = $("#lock-bio");
+  bioBtn.hidden = !state.lock?.bio;
+  const err = $("#lock-error");
+  err.hidden = true;
+  const input = $("#lock-input");
+  input.value = "";
+  input.disabled = false;
+}
+
+function showLockError(msg) {
+  const err = $("#lock-error");
+  err.textContent = msg;
+  err.hidden = false;
+  const input = $("#lock-input");
+  input.value = "";
+  input.focus();
+  $("#screen-lock").classList.remove("shake");
+  // Reflow so the animation restarts on repeated wrong tries.
+  void $("#screen-lock").offsetWidth;
+  $("#screen-lock").classList.add("shake");
+}
+
+// A record from before Argon2id, or one below today's cost, is re-wrapped
+// under the current KDF while the passcode is in hand. The old record stays
+// on disk until the new one is written, so a crash here changes nothing.
+async function rewrapPasscodeIfNeeded(pc) {
+  if (!state.vaultKey || !passcodeNeedsRewrap(state.lock?.pass)) return false;
+  try {
+    const pass = await makePasscodeRecord(pc, state.vaultKey);
+    state.lock = { ...state.lock, pass };
+    await dbSet("lock", state.lock);
+    return true;
+  } catch (e) {
+    window.__starlingErrors.push(`rewrap: ${String(e)}`);
+    return false;
+  }
+}
+
+function ensureLockUI() {
+  if (lockWired) return;
+  lockWired = true;
+  const form = $("#lock-form");
+  const input = $("#lock-input");
+  const unlockBtn = $("#lock-unlock");
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const pc = input.value;
+    if (!pc) return;
+    input.disabled = true;
+    unlockBtn.disabled = true;
+    unlockBtn.textContent = t("Unlocking...");
+    let ok = false;
+    // A sealed record that will not authenticate is a damaged or tampered
+    // install, not a mistyped passcode. Telling someone their passcode is
+    // wrong when it is not sends them looking for the wrong problem, and the
+    // one thing that must never happen here is erasing a circle over it.
+    damagedAtRest = false;
+    let kdfDown = false;
+    try {
+      ok = await unlockWith(() => openPasscodeRecord(state.lock.pass, pc));
+    } catch (e) {
+      ok = false;
+      damagedAtRest = isSealedRecordError(e);
+      kdfDown = e instanceof KdfUnavailableError;
+    }
+    if (ok) await rewrapPasscodeIfNeeded(pc);
+    // The duress path: not an unlock, an erase. It runs the same panic wipe
+    // the settings sheet offers and reloads into a fresh install, with
+    // nothing shown in between: the screen someone is forced to type on must
+    // never flash a hint that a second code exists.
+    if (!ok && !damagedAtRest && !kdfDown && state.lock?.duress) {
+      let hit = false;
+      try {
+        hit = await matchesDuress(state.lock.duress, pc);
+      } catch {
+        hit = false;
+      }
+      if (hit) {
+        await panic();
+        return;
+      }
+    }
+    unlockBtn.disabled = false;
+    unlockBtn.textContent = t("Unlock");
+    input.disabled = false;
+    if (!ok) {
+      showLockError(
+        damagedAtRest
+          ? t("That passcode is right, but this install's stored data will not open. Nothing was erased.")
+          : kdfDown
+            ? t("This device could not run the lock's key stretching. Nothing was erased; try again, or free some memory.")
+            : t("Wrong passcode. Try again."),
+      );
+    }
+  });
+  $("#lock-bio").addEventListener("click", async () => {
+    if (!state.lock?.bio) return;
+    let ok = false;
+    try {
+      ok = await unlockWith(() => openBioRecord(state.lock.bio));
+    } catch {
+      ok = false;
+    }
+    if (!ok) showLockError(t("Biometric unlock did not work. Use your passcode."));
+  });
+  $("#lock-wipe").addEventListener("click", forgotPasscode);
+}
+
+function forgotPasscode() {
+  const ov = ui.openOverlay({ title: "Forgot passcode", testid: "forgot-sheet" });
+  ov.body.append(
+    ui.el(
+      "p",
+      "ov-note",
+      "Starling cannot recover a forgotten passcode. Nothing about your circle leaves your device unencrypted, so there is no reset link. You can erase this device and rejoin your circle from a fresh invite. Hold the button to erase everything on this device.",
+    ),
+  );
+  const hold = ui.el("button", "btn btn-danger btn-hold", "Hold to erase this device");
+  hold.type = "button";
+  ui.holdToFire(hold, {
+    ms: 1500,
+    onFire: panic,
+    onShortTap: (atArmed) =>
+      ui.toast(atArmed ? "Tap once more to erase everything" : "Press and hold to erase"),
+  });
+  ov.body.append(hold);
+}
+
+// Auto-lock: relock after the chosen idle delay once the tab is hidden, and
+// always start locked on a fresh launch (handled in boot).
+//
+// Not while a share is running with "keep sharing when the app is closed" on.
+// Locking drops the keys, and dropping the keys ends the share, which is the
+// one thing that switch promises will not happen; its note says the lock
+// cannot protect them until the share ends. The timer is armed when the share
+// does end.
+//
+// Shown, not visible, so the wrapper's one second thaws never restart the
+// countdown. The clock decides on the way back in: a frozen page runs no timers.
+function armAutoLock() {
+  if (!state.lock?.enabled || state.locked) {
+    if (pageShown()) hiddenAt = 0;
+    return;
+  }
+  if (state.sharing && keptPastClose()) {
+    clearLockTimer();
+    hiddenAt = 0;
+    return;
+  }
+  if (pageShown()) {
+    const away = hiddenAt ? Date.now() - hiddenAt : 0;
+    hiddenAt = 0;
+    clearLockTimer();
+    if (away && away >= state.lock.autolockMs) lockNow();
+    return;
+  }
+  if (!hiddenAt) hiddenAt = Date.now();
+  if (lockTimer || lockingAway) return;
+  const left = Math.max(0, state.lock.autolockMs - (Date.now() - hiddenAt));
+  lockTimer = setTimeout(() => {
+    lockTimer = 0;
+    lockAway().catch(() => lockNow());
+  }, left);
+}
+
+// A locked Starling holds no keys, so a share cannot outlive the lock. With
+// nobody looking the lock can wait a moment: the share ends the way Android
+// ending it does, bye first, a record and a notice, and it comes back after
+// unlock. Someone who comes back meanwhile gets the lock at once.
+let lockingAway = false;
+const LOCK_BYE_WAIT_MS = 5000;
+
+async function lockAway() {
+  if (!state.lock?.enabled || state.locked || lockingAway) return;
+  if (state.sharing && !state.demo) {
+    lockingAway = true;
+    try {
+      noteLockEnded();
+      const bye = setSharing(false, { keepArmed: true });
+      await Promise.race([bye, new Promise((r) => setTimeout(r, LOCK_BYE_WAIT_MS))]);
+    } finally {
+      lockingAway = false;
+    }
+  }
+  lockNow();
+}
+
+function noteLockEnded() {
+  state.stopRecord = { route: "lock", at: Date.now() };
+  shareResumeTried = false;
+  callNative("shareEndedByLock");
+}
+
+function canKeepSharing() {
+  return typeof native()?.setKeepSharing === "function" && !state.demo;
+}
+
+function keepSharingFromCard() {
+  try {
+    native()?.setKeepSharing?.(true);
+  } catch {
+    // an older wrapper; the switch in Settings says the same
+  }
+  markLockShareNoted();
+  // A timer already counting would still end the share.
+  armAutoLock();
+  ui.toast(t("Shares now keep running while Starling is closed or locked."));
+}
+
+function markLockShareNoted() {
+  if (!state.settings.lockShareNoted) {
+    state.settings = { ...state.settings, lockShareNoted: true };
+    dbSet("settings", state.settings).catch(() => {});
+  }
+  render();
+}
+
+function keptPastClose() {
+  try {
+    return !!native()?.keepSharing?.();
+  } catch {
+    return false;
+  }
+}
+
+document.addEventListener("visibilitychange", armAutoLock);
+
+async function saveProfile(p) {
+  state.profile = { name: p.name, emoji: p.emoji };
+  await dbSet("profile", state.profile);
+}
+
+function promptCreate() {
+  if (!shareCapable() || state.locked) return;
+  ui.openIdentitySheet({
+    title: state.gen ? "New circle" : "Create your circle",
+    intro: "How you appear to the people you invite. This never leaves your circle.",
+    cta: "Create circle",
+    profile: state.profile,
+    circleName: { value: state.gen ? "" : state.circleName },
+    onSave: (p) =>
+      withCircleGuard(async () => {
+        // Whether this ADDS a circle is decided now, not when the sheet
+        // opened: overlays stack, and a join that committed underneath this
+        // sheet must not be silently overwritten.
+        const addMode = !!state.gen;
+        if (state.demo) exitDemo();
+        // Snapshot the outgoing circle BEFORE the new profile is saved, so
+        // a per-circle pseudonym stays with its circle instead of bleeding
+        // into the one being left.
+        const outgoing = addMode ? await activeRecord() : null;
+        await saveProfile(p);
+        if (state.sharing) await awaitBye(await setSharing(false));
+        const prev = {
+          gen: state.gen,
+          pinned: state.pinned,
+          genRoster: state.genRoster,
+          invite: state.invite,
+          identity: state.identity,
+          circleName: state.circleName,
+          circleShare: state.circleShare,
+          circles: state.circles,
+        };
+        let opened = null;
+        try {
+          if (addMode) {
+            // The current circle goes into the inactive array before anything
+            // touches the active slots, so no failure below can lose it.
+            state.circles = [...state.circles, outgoing];
+            await persistCirclesAtRest();
+          }
+          const now = Date.now();
+          opened = await openGeneration({
+            seed: newSeed(),
+            g: 0,
+            e0: epochAt(now),
+            historyEpochs: historyEpochs(),
+          });
+          state.gen = opened;
+          state.gen.at = now;
+          state.pinned = new Map();
+          state.genRoster = new Set();
+          state.rosterPending = null;
+          state.rosterMismatch = null;
+          state.joinedVia = null;
+          state.joinIncomplete = null;
+          state.chainDestroyed = false;
+          state.chainWipeFailed = null;
+          state.invite = null;
+          state.identity = await generateIdentity();
+          state.circleName = p.circleName || (addMode ? "New circle" : prev.circleName);
+          await dbSet("circleName", state.circleName);
+          await persistCircle();
+          // A new circle starts on the defaults, not on the last circle's
+          // choices. The slot is cleared after the landing so a failure above
+          // leaves the circle that stays active with its own settings.
+          state.circleShare = packShare(null);
+          await dbDel("circleShare");
+        } catch (e) {
+          // Undo the in-memory swap AND put the disk array back in step with
+          // it, so a later mutation cannot resurrect a stale entry the boot
+          // reconcile no longer recognizes. Only the generation this attempt
+          // opened is destroyed: the one being rolled back to is still live.
+          opened?.ratchet.destroy();
+          state.gen = prev.gen;
+          state.pinned = prev.pinned;
+          state.genRoster = prev.genRoster;
+          state.invite = prev.invite;
+          state.identity = prev.identity;
+          state.circleName = prev.circleName;
+          state.circleShare = prev.circleShare;
+          state.circles = prev.circles;
+          await persistCirclesAtRest().catch(() => {});
+          throw e;
+        }
+        // The outgoing circle's chain key is in the array now; the live copy
+        // in its ratchet is not needed and does not get to linger.
+        if (addMode) prev.gen?.ratchet.destroy();
+        stopInviteWatch();
+        state.me = null;
+        focusedId = null;
+        resetMemberAlerts();
+        sheetAutoOpened = false;
+        mapView?.clearAll();
+        if (state.locked) return;
+        await enterCircle();
+        openInvite();
+      }),
+  });
+}
+
+// Joining is a request now, not a fait accompli. The link is a one-time
+// credential that bootstraps a pairwise channel; the circle's own keys are
+// replaced at the moment somebody accepts, which is what stops a joiner
+// reading the epoch they joined during.
+function promptJoin(invite) {
+  if (!shareCapable() || state.locked) return;
+  const verdict = joinPromptVerdict({ joining: state.joining, invite: state.invite, candidate: invite });
+  if (verdict === "already-asked") {
+    ui.toast("You already asked to join. They still have to let you in.");
+    return;
+  }
+  if (verdict === "own-link") {
+    ui.toast("That is your own invite link.");
+    return;
+  }
+  const relayVerdict = joinRelayVerdict({
+    inviteRelay: invite.relay,
+    currentRelay: customRelayInUse(),
+    committed: (!!state.gen && !state.demo) || state.circles.length > 0 || !!state.joining,
+  });
+  if (relayVerdict === "mismatch") {
+    showRelayMismatch(invite.relay);
+    return;
+  }
+  ui.openJoinSheet({
+    profile: state.profile,
+    hasCircle: !!state.gen,
+    circleName: { value: "" },
+    relayHost: relayVerdict === "adopt" ? new URL(invite.relay).host : "",
+    onJoin: (p) =>
+      withCircleGuard(async () => {
+        // Joining from inside the demo ends the demo first, so the real
+        // circle and its poller take over instead of the demo walkers.
+        if (state.demo) exitDemo();
+        if (relayVerdict === "adopt") await adoptRelay(invite.relay);
+        await saveProfile(p);
+        await joinWithInvite(invite, p);
+        ui.toast("Request sent. Someone in the circle has to accept it from their phone.");
+      }),
+  });
+}
+
+// Only reached with no circle and no request in flight, so nothing is polling
+// or sending yet and the base can change now instead of at the next start.
+// "" goes back to the default relay.
+async function adoptRelay(relay) {
+  state.relay = relay;
+  if (relay) await dbSet("relay", relay);
+  else await dbDel("relay");
+  setApiBase(relay || null);
+}
+
+// The start screen's relay field, for the phone that creates a circle on its
+// own relay. Returns false when the value is refused, so the sheet stays open.
+async function saveStartRelay(value) {
+  if (state.joining) {
+    ui.toast("Cancel your join request first.", "warn");
+    return false;
+  }
+  const text = String(value ?? "").trim();
+  const norm = normalizeRelay(text);
+  if (text && !norm) {
+    ui.toast("A relay must be an https URL, like https://relay.example.org", "warn");
+    return false;
+  }
+  await adoptRelay(norm || "");
+  ui.toast(norm ? t("Starling will use {host}.", { host: new URL(norm).host }) : "Starling will use the default relay.");
+  return true;
+}
+
+function promptStartRelay() {
+  const ov = ui.openOverlay({ title: "Use your own relay", testid: "start-relay-sheet" });
+  const field = ui.el("label", "field");
+  field.append(ui.el("span", "field-label", "Relay"));
+  const input = ui.el("input", "text-input");
+  input.type = "url";
+  input.placeholder = "https://relay.example.org";
+  input.autocomplete = "off";
+  input.value = state.relay || "";
+  input.dataset.testid = "start-relay-input";
+  field.append(input);
+  const save = ui.el("button", "btn btn-primary", "Save");
+  save.type = "button";
+  save.dataset.testid = "start-relay-save";
+  save.addEventListener("click", async () => {
+    if (await saveStartRelay(input.value)) ov.close();
+  });
+  ov.body.append(
+    ui.el("p", "ov-note", "Only if you run a relay yourself. Everyone in your circle has to use the same one, and the invite links you send carry it."),
+    field,
+    save,
+  );
+  input.focus();
+}
+
+function showRelayMismatch(relay) {
+  const current = customRelayInUse();
+  const ov = ui.openOverlay({ title: "This circle uses another relay", testid: "relay-mismatch" });
+  ov.body.append(
+    ui.el("p", "ov-note", t("This invitation is for a circle on {host}.", { host: new URL(relay).host })),
+    ui.el(
+      "p",
+      "ov-note",
+      current
+        ? t("Your circles use {host}, and Starling talks to one relay at a time.", { host: new URL(current).host })
+        : t("Your circles use the default relay, and Starling talks to one relay at a time."),
+    ),
+    ui.el(
+      "p",
+      "ov-note",
+      t("To join it, put {relay} in Settings, Advanced, Relay, restart Starling and open the link again. Your other circles stop updating while it is set.", { relay }),
+    ),
+  );
+}
+
+// A whole link, a bare fragment, or "j=..." on its own, for the paste field and the scanner alike.
+function inviteFromText(text) {
+  const s = String(text ?? "").trim();
+  const idx = s.indexOf("#j=");
+  const frag = idx >= 0 ? s.slice(idx) : s.startsWith("j=") ? `#${s}` : s;
+  return parseInviteFragment(frag);
+}
+
+// Null for an invite, else what the scanner says while it keeps looking.
+function inviteScanProblem(text) {
+  if (inviteFromText(text)) return null;
+  if (parseSafetyQr(text)) return t("That is a safety number code, not an invite.");
+  return t("That is not a Starling invite code.");
+}
+
+function joinFromScan(text, join = promptJoin) {
+  const invite = inviteFromText(text);
+  if (invite) join(invite);
+  return !!invite;
+}
+
+function promptPasteInvite() {
+  const ov = ui.openOverlay({ title: "Join with a link", testid: "paste-sheet" });
+  ov.body.append(
+    ui.el("p", "ov-note", "Paste the invite link someone sent you. The circle secret stays in the link fragment and never touches a server."),
+  );
+  const field = ui.el("label", "field");
+  field.append(ui.el("span", "field-label", "Invite link"));
+  const input = ui.el("input", "text-input");
+  input.type = "text";
+  input.placeholder = "https://.../#j=...";
+  input.autocomplete = "off";
+  input.setAttribute("aria-describedby", "paste-invite-error");
+  field.append(input);
+  const err = ui.el("p", "ov-warn-note", "That does not look like a Starling invite link.");
+  err.id = "paste-invite-error";
+  err.setAttribute("role", "alert");
+  err.hidden = true;
+  const go = ui.el("button", "btn btn-primary", "Continue");
+  go.type = "button";
+  go.addEventListener("click", () => {
+    const invite = inviteFromText(input.value);
+    if (!invite) {
+      err.hidden = false;
+      return;
+    }
+    ov.close();
+    promptJoin(invite);
+  });
+  ov.body.append(field, err, go);
+  // The app only: the hosted site's headers deny the camera.
+  if (api.canScanQr()) {
+    const scan = ui.el("button", "btn btn-secondary", "Scan a code");
+    scan.type = "button";
+    scan.dataset.testid = "paste-scan";
+    scan.addEventListener("click", () => {
+      ov.close();
+      ui.openScanSheet({
+        api,
+        title: "Scan an invite code",
+        note: "Point the camera at the invite code on their screen.",
+        check: inviteScanProblem,
+        onResult: (text) => joinFromScan(text),
+      });
+    });
+    ov.body.append(scan);
+  }
+  input.focus();
+}
+
+// ------------------------------------------------------------ invitations
+//
+// A v1 invite was a bearer token: the link carried the circle secret, so
+// whoever saw it held every past and future key. A v2 invitation is a one-time
+// credential that bootstraps a pairwise channel, and the circle's own key
+// material is replaced at the moment somebody is let in. The cost is honest:
+// an invitation now needs a human on the other side to come back and accept it.
+
+const INVITE_POLL_MS = 15000;
+
+// The invite channel carries one handshake under one symmetric key. There is
+// no chain to advance and nothing to re-key, so the ratchet the sender expects
+// is that key handed back for whatever epoch it asks about; the epoch still
+// travels in the AAD and inside the signature.
+function fixedKeyRatchet(key) {
+  return {
+    keyFor: async () => key,
+    currentEpoch: async (now = Date.now()) => epochAt(now),
+    retainedEpochs: () => [],
+  };
+}
+
+function inviteSender(identity, chanId, key) {
+  let lastTs = 0;
+  return createSender({
+    identity,
+    channelId: chanId,
+    ratchet: fixedKeyRatchet(key),
+    getLastTs: () => lastTs,
+    setLastTs: (ts) => {
+      lastTs = ts;
+    },
+  });
+}
+
+// A poll loop for an invite channel. Deliberately not the circle's poller:
+// there is no ratchet here, no trail, and no roster to merge into, so the
+// checks a receiver owes are spelled out rather than inherited. Nothing the
+// relay says is taken on trust: the member id has to commit to the keys
+// presented, the signature has to verify against them, and the sealed ts has
+// to be the one the header committed to.
+function pollInviteChannel({ chanId, key, selfId, onMessage, onBatch, screenEntry }) {
+  let stopped = false;
+  let timer = 0;
+  let since = 0;
+  const seen = new Set();
+
+  async function tick() {
+    if (stopped) return;
+    try {
+      const res = await fetch(apiUrl(`/api/v2/f/${chanId}?since=${since}`), { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        for (const entry of data.members || []) {
+          if (!entry || typeof entry.m !== "string" || entry.m === selfId) continue;
+          let pk, epk;
+          try {
+            pk = b64uDecode(entry.pk);
+            epk = b64uDecode(entry.epk);
+          } catch {
+            continue;
+          }
+          if ((await memberIdFromKeys(pk, epk)) !== entry.m) continue;
+          // A caller who can already name the only sender it will listen to
+          // (the joiner, whose link commits to the inviter) filters here,
+          // with a hash compare, before any signature below is paid for.
+          // Anyone holding the invite link could otherwise feed this loop
+          // well-formed garbage at one Ed25519 verification per point.
+          if (screenEntry && !(await screenEntry({ memberId: entry.m, pk: entry.pk, epk: entry.epk }))) continue;
+          for (const p of entry.points || []) {
+            if (Number.isFinite(p.srv) && p.srv > since) since = p.srv;
+            const tag = `${entry.m}|${p.e}|${p.ts}`;
+            if (seen.has(tag)) continue;
+            seen.add(tag);
+            let n, c, sig;
+            try {
+              n = b64uDecode(p.n);
+              c = b64uDecode(p.c);
+              sig = b64uDecode(p.sig);
+            } catch {
+              continue;
+            }
+            // Derived from the key, never taken off the wire. This is the last
+            // path that read the relay's `alg`, and while a flipped field here
+            // only makes verification fail rather than corrupting anything
+            // durable, "the relay can silently stop anyone joining" is not a
+            // property worth keeping for the sake of one field.
+            const entryAlg = algFromPk(pk);
+            if (!entryAlg) continue;
+            if (!(await verifySig(entryAlg, pk, sig, sigBase(chanId, entry.m, p.e, p.ts, p.n, p.c)))) continue;
+            // The epoch is signed and it is what a welcome's opening epoch is
+            // bounded against, so it has to mean something before it is used
+            // as a bound. The relay refuses an implausible one on the way in;
+            // this is the receiver making the same check for itself, because
+            // an untrusted party's verdict is worth nothing and a welcome is
+            // read by a device with no chain of its own to sanity-check it.
+            if (!epochPlausible(p.e, Date.now())) continue;
+            const obj = await openMessage(key, chanId, entry.m, p.e, p.ts, n, c);
+            if (!obj || obj.ts !== p.ts) continue;
+            await onMessage(obj, { memberId: entry.m, alg: entryAlg, pk: entry.pk, epk: entry.epk }, p.e);
+          }
+        }
+        await onBatch?.();
+      }
+    } catch {
+      // The link is valid until it expires; a failed poll is just a longer wait.
+    }
+    if (!stopped) timer = setTimeout(tick, INVITE_POLL_MS);
+  }
+  tick();
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+  };
+}
+
+const inviteLinkFor = (inv) => `${shareUrlBase()}${inviteFragment(inv.secret, inv.commit, customRelayInUse())}`;
+
+// Mint an invitation. One at a time, and a fresh one replaces the last: two
+// live credentials for one circle is two chances for the wrong person to be
+// holding one.
+async function createInvite() {
+  const now = Date.now();
+  const plan = mintDecision({ invite: state.invite, ready: !!state.gen && !state.demo && !state.locked, now });
+  if (plan.action === "refuse") return null;
+  if (plan.action === "reuse") return inviteLinkFor(state.invite);
+  if (plan.replaces) zero(state.invite.secret);
+  // The link commits to this circle's identity, and the record names it. The
+  // commitment is what lets the joiner tell the person who sent the link from
+  // anyone else who saw it; the name is what stops another circle on this
+  // device answering the link on its behalf.
+  state.invite = {
+    secret: newInviteSecret(),
+    commit: await inviterCommitment(state.identity.pk, state.identity.epk),
+    by: state.identity.memberId,
+    createdAt: now,
+    expiresAt: now + INVITE_TTL_MS,
+  };
+  state.joinRequests = [];
+  await writeRecordAtRest(kv, lockCtx(), INVITE_SLOT, packInvite(state.invite));
+  startInviteWatch();
+  render();
+  return inviteLinkFor(state.invite);
+}
+
+// Burn: the credential is gone from memory and from disk, and a second join
+// request on that channel is ignored because nothing is listening any more.
+async function burnInvite() {
+  stopInviteWatch();
+  if (state.invite) zero(state.invite.secret);
+  state.invite = null;
+  state.joinRequests = [];
+  await writeRecordAtRest(kv, lockCtx(), INVITE_SLOT, null).catch(() => {});
+  render();
+}
+
+function stopInviteWatch() {
+  invitePoll?.();
+  invitePoll = null;
+}
+
+function startInviteWatch() {
+  stopInviteWatch();
+  const inv = state.invite;
+  // Answering a link this circle did not mint is how a stranger gets admitted
+  // to the wrong circle: one invite slot, several circles, and whoever is
+  // active picks up whatever is in it. That rule and the expiry both live in
+  // inviteWatchDecision; burning is the effect, so it stays here.
+  const { action } = inviteWatchDecision({
+    invite: inv,
+    ready: !!state.gen && !state.demo && !state.locked,
+    selfId: state.identity?.memberId,
+    now: Date.now(),
+  });
+  if (action === "idle") return;
+  if (action === "burn") {
+    burnInvite().catch(() => {});
+    return;
+  }
+  (async () => {
+    const chanId = await deriveInviteChannelId(inv.secret);
+    const key = await deriveInviteKey(inv.secret);
+    if (state.invite !== inv) return; // burned while the keys were deriving
+    invitePoll = pollInviteChannel({
+      chanId,
+      key,
+      selfId: state.identity.memberId,
+      onMessage: (obj, from) => onJoinRequest(inv, obj, from),
+    });
+  })().catch((e) => window.__starlingErrors.push(`invite: ${String(e)}`));
+}
+
+// A join request. It is never acted on automatically: the whole point of a v2
+// invitation is that a person compares a safety number and says yes, so this
+// only puts the request where stage 2 can draw it.
+async function onJoinRequest(inv, obj, from) {
+  if (state.invite !== inv) return;
+  // The keys in the request must be the keys the post was signed with, or the
+  // safety number a person compares is not the one that will be pinned. The
+  // same key spelled two ways is the same key: comparing the spellings made a
+  // request the inviter simply never saw, with nothing on screen to say why.
+  const seen = await screenJoinRequest({
+    obj,
+    from,
+    invite: inv,
+    now: Date.now(),
+    keysMatch: sameKey(obj.pk, from.pk) && sameKey(obj.epk, from.epk),
+    known: state.pinned.has(from.memberId),
+    listed: state.joinRequests.some((r) => r.memberId === from.memberId),
+  });
+  if (!seen.ok) {
+    if (seen.reason === "expired") await burnInvite();
+    if (seen.reason === "bad-key") window.__starlingErrors.push("join request with a malformed agreement key: dropped");
+    return;
+  }
+  state.joinRequests.push({
+    memberId: from.memberId,
+    alg: from.alg,
+    pk: canonKey(from.pk),
+    epk: canonKey(from.epk),
+    name: seen.name,
+    safety: seen.safety,
+    at: Date.now(),
+  });
+  const who = obj.name ? String(obj.name).slice(0, 24) : "Someone";
+  ui.toast(t("{who} wants to join. Check their safety number.", { who }));
+  // The inviter often pockets the phone right after sending the link; the
+  // request arriving is the other moment this flow hinges on. The name stays
+  // OUT of the notification: it is whatever the requester typed, anyone
+  // holding the link can send one, and the lock screen is no place to render
+  // an unauthenticated stranger's chosen words.
+  notifyEvent(t("Someone wants to join"), t("Open Starling to check their number and let them in."), "join-req");
+  render();
+}
+
+// Let someone in. Admitting is a re-key that includes them, so they are handed
+// a generation that did not exist a moment ago and there is no backlog for
+// them to read.
+async function acceptJoin(req) {
+  return withCircleGuard(async () => {
+    const inv = state.invite;
+    // Whether this request may be let in at all, and on what record, is
+    // admissionCheck's: the cap, the key that has to be a real point, the id
+    // and algorithm re-derived from the key rather than read off the wire.
+    // What is left here is what a refusal costs a person: a burned link, a
+    // sentence on screen, or neither.
+    const check = await admissionCheck({
+      req,
+      invite: inv,
+      pinned: state.pinned,
+      ready: !!state.gen,
+      now: Date.now(),
+    });
+    if (!check.ok) {
+      if (check.reason === "expired") {
+        await burnInvite();
+        ui.toast("That invitation expired. Make a new link.", "warn");
+      } else if (check.reason === "full") {
+        ui.toast(t("A circle holds {n} people and yours is full. Remove somebody before letting anyone else in.", { n: MEMBER_CAP }), "warn");
+      } else if (check.reason === "bad-keys") {
+        ui.toast("That request's keys are malformed. Nobody was let in.", "warn");
+      }
+      return false;
+    }
+    const { rec, epk } = check;
+    // Step one of admissionPlan(): the rendezvous channel gets claimed BEFORE
+    // the re-key, because nothing outside that channel has happened yet and a
+    // refusal here therefore costs nothing. See the plan for what the cap on
+    // that channel does to a delivery that is attempted the other way round.
+    const inviteSecret = new Uint8Array(inv.secret);
+    let channel = null;
+    try {
+      channel = await openWelcomeChannel(inviteSecret, req);
+    } catch (e) {
+      zero(inviteSecret);
+      window.__starlingErrors.push(`welcome slot: ${String(e)}`);
+      // Nothing irreversible has happened, so the circle is exactly as it was
+      // and the person is told that in those words. A cap that refused us a
+      // slot is permanent for this channel, so that link is finished and it is
+      // burned rather than left looking usable; anything else is a bad moment
+      // on the network and the link still works.
+      if (slotFailure(e).burn) {
+        await burnInvite();
+        ui.toast("Somebody else is jamming that invite link, so it cannot be used any more. Nobody was let in. Make a new link and send it again.", "warn");
+      } else {
+        ui.toast("Could not reach them to send the keys, so nobody was let in. Try again in a moment.", "warn");
+      }
+      return false;
+    }
+    let out;
+    try {
+      out = await doRekey({ admit: { memberId: req.memberId, epk, rec }, reason: "join" });
+    } catch (e) {
+      // The slot we claimed and the copy of the invitation are ours to clean
+      // up however the re-key ends.
+      channel.post.cancel();
+      zero(inviteSecret);
+      throw e;
+    }
+    if (!out) {
+      channel.post.cancel();
+      zero(inviteSecret);
+      return false;
+    }
+    let delivered = false;
+    try {
+      await sendWelcome(channel, req, out.seed, out.members);
+      delivered = true;
+    } catch (e) {
+      window.__starlingErrors.push(`welcome: ${String(e)}`);
+    } finally {
+      zero(out.seed);
+      zero(inviteSecret);
+    }
+    // A welcome that did not go out takes the admission back out with it: the
+    // plan's "undo-admission", which is itself a re-key, and undoAdmission
+    // names exactly what it removes. The circle goes back to what it was at
+    // the cost of one more re-key, the link is still live and the request is
+    // still on the list below, so the person retries from a circle that is
+    // whole.
+    //
+    // The undo can fail in turn. If it does, say so in the words that name the
+    // only way out, because a member this device cannot talk to is still a
+    // member it can remove.
+    if (!delivered) {
+      let back = null;
+      try {
+        back = await doRekey(undoAdmission(req.memberId));
+      } catch (e) {
+        window.__starlingErrors.push(`welcome rollback: ${String(e)}`);
+      }
+      if (back) {
+        ui.toast("Could not send them the keys, so nobody was let in. Your link still works, so try again.", "warn");
+      } else {
+        ui.toast(
+          t("Could not send {who} the keys, and could not undo letting them in. Remove them from the circle before you try again.", { who: req.name || t("them") }),
+          "warn",
+        );
+      }
+      render();
+      return false;
+    }
+    await burnInvite();
+    ui.toast(t("{who} joined. Everyone got new keys.", { who: req.name || t("They") }));
+    render();
+    return true;
+  });
+}
+
+// Turning someone away costs nothing: the invitation stays live for whoever it
+// was actually meant for, and this request is not shown again.
+function rejectJoin(req) {
+  state.joinRequests = state.joinRequests.filter((r) => r.memberId !== req.memberId);
+  render();
+  return true;
+}
+
+// Take a member slot on the rendezvous channel and keep the sender that holds
+// it. Every later post from this device passes the cap on the strength of the
+// row this one creates, so once it succeeds the welcome can be delivered.
+//
+// One sender for the whole exchange, deliberately: two senders on one channel
+// pick their timestamps independently, and the relay refuses a post whose ts
+// does not beat the last one it stored for that member.
+async function openWelcomeChannel(inviteSecret, req) {
+  const chanId = await deriveInviteChannelId(inviteSecret);
+  const key = await deriveInviteKey(inviteSecret);
+  const post = inviteSender(state.identity, chanId, key);
+  try {
+    // The joiner ignores anything that is not a welcome or a member record, so
+    // this says nothing and only exists to claim the slot. It is padded to the
+    // same length as every other message, so the relay cannot tell it apart
+    // from the welcome that follows.
+    await post.send({ t: "ack", to: req.memberId });
+  } catch (e) {
+    post.cancel();
+    throw e;
+  }
+  return { chanId, post };
+}
+
+// The welcome goes to the invite channel, sealed to the joiner's agreement key
+// so only the device that made the request can open it, signed by the circle
+// identity the invite link commits to, and bound to that identity inside the
+// wrap.
+//
+// It used to be signed by a throwaway identity and sealed under the default
+// empty context, to keep one key off both the rendezvous channel and the
+// circle channel. That cost is real, and it bought nothing: with nobody named,
+// a welcome was whoever posted one first. Anyone who saw the link could derive
+// the rendezvous channel, read the joiner's agreement key out of their request,
+// seal a seed of their own, and win the race easily, because the real inviter
+// has to be online and tap accept. The joining device would then stream live
+// position to a channel the attacker owns while the app said "You joined". So
+// the welcome is authenticated, the linkage is accepted, and the relay learning
+// that one key posted on both channels is the smaller harm by a long way.
+//
+// It goes out on the channel, and through the sender, that openWelcomeChannel
+// already claimed a member slot with.
+async function sendWelcome({ chanId, post }, req, seed, members) {
+  const joinerEpk = b64uDecode(req.epk);
+  const g = state.gen.g;
+  const e0 = state.gen.e0;
+  // The same idea as a re-key's wrap context: everything the message asserts,
+  // inside the AEAD's associated data, so a wrap only opens under the exact
+  // claims it was made for and cannot be lifted into anybody else's welcome.
+  const context = welcomeContext({ by: state.identity.memberId, g, e0 });
+
+  const sealFor = async (bytes) => {
+    const eph = await generateEphemeral();
+    const w = await sealTo(eph.privateKey, joinerEpk, chanId, req.memberId, bytes, context);
+    return { eph: b64uEncode(eph.pub), w: b64uEncode(w) };
+  };
+
+  // One record per existing member, including ourselves: this is what lets a
+  // joiner pin the circle from the invitation rather than from whatever the
+  // relay serves first.
+  const roster = welcomeRoster({
+    self: {
+      memberId: state.identity.memberId,
+      alg: state.identity.alg,
+      pk: b64uEncode(state.identity.pk),
+      epk: b64uEncode(state.identity.epk),
+      name: state.profile?.name || "",
+    },
+    members,
+    joinerId: req.memberId,
+  });
+
+  // The member records go out FIRST and the welcome goes out LAST, and that
+  // order is the whole of what makes a half-sent delivery harmless. It is the
+  // plan that says so, not this loop: welcomePlan returns the posts in the
+  // order they have to leave, and this walks them and seals each one. Why that
+  // order, and what a delivery run the other way round leaves behind, is in
+  // admissionPlan.
+  try {
+    for (const item of welcomePlan({ roster, g, e0 })) {
+      if (item.t === "welcome") {
+        await post.send({ t: "welcome", ...item.head, ...(await sealFor(seed)) });
+        continue;
+      }
+      const body = item.body;
+      let sealed = await sealFor(te.encode(JSON.stringify(body)));
+      if (recordOverflows(sealed)) {
+        delete body.name;
+        sealed = await sealFor(te.encode(JSON.stringify(body)));
+      }
+      await post.send({ t: "member", ...sealed });
+    }
+  } finally {
+    post.cancel();
+  }
+}
+
+// ------------------------------------------------------------------ joining
+
+function stopJoinWatch() {
+  joinPoll?.();
+  joinPoll = null;
+}
+
+// Ask to be let in. The keypairs are generated here and live in memory only
+// until the welcome lands: if the app is closed before somebody accepts, the
+// request is dead and the link has to be used again.
+async function joinWithInvite(invite, profile) {
+  // A new join replaces whatever join was in flight, and the poll and the
+  // record of it go together. Stopping only the poll left state.joining naming
+  // the old request if the post below then failed: the screen sat on "waiting
+  // to be let in" for a channel nothing was listening to, for as long as the
+  // app stayed open, and cancelling was the only way out of it.
+  cancelJoin();
+  const { secret, commit } = invite;
+  const identity = await generateIdentity();
+  const chanId = await deriveInviteChannelId(secret);
+  const key = await deriveInviteKey(secret);
+  const post = inviteSender(identity, chanId, key);
+  // The number the inviter is about to compare, so the joiner can read it out
+  // instead of taking it on faith that the right request arrived.
+  let safety = null;
+  try {
+    safety = await safetyNumber(identity.pk, identity.epk);
+  } catch {
+    safety = null;
+  }
+  try {
+    await post.send({
+      t: "join",
+      pk: b64uEncode(identity.pk),
+      epk: b64uEncode(identity.epk),
+      name: profile?.name || "",
+    });
+  } finally {
+    post.cancel();
+  }
+  state.joining = {
+    status: "waiting",
+    since: Date.now(),
+    safety,
+    secret: new Uint8Array(secret),
+    // The link's commitment to the inviter's identity. Nothing that arrives on
+    // this channel is used for anything until it matches.
+    commit: new Uint8Array(commit),
+    imposters: 0,
+    identity,
+    chanId,
+    key,
+    circleName: profile?.circleName || "New circle",
+  };
+  startJoinWatch();
+  render();
+  return true;
+}
+
+function cancelJoin() {
+  stopJoinWatch();
+  if (state.joining) zero(state.joining.secret);
+  state.joining = null;
+  render();
+}
+
+// The welcome and the member records are posted in one burst, so one feed
+// response normally carries all of them. They are collected across the
+// response and applied together at the end of it, so the joiner pins the
+// circle from the invitation rather than trusting whoever posts first.
+function startJoinWatch() {
+  stopJoinWatch();
+  const j = state.joining;
+  if (!j) return;
+  const pending = [];
+  // Counted at the door rather than found later: assembleWelcome only ever
+  // looked at t:"welcome", so a stranger posting t:"member" was invisible to
+  // it, and the buffer it filled was the only place the jam showed.
+  let strangers = 0;
+  const strangerIds = new Set();
+  joinPoll = pollInviteChannel({
+    chanId: j.chanId,
+    key: j.key,
+    selfId: j.identity.memberId,
+    // Cheap gate first: only the identity the link commits to gets a
+    // signature check. A refused entry is the same stranger signal the
+    // message screen used to count, deduped by identity because the poll
+    // walks the same entries every tick.
+    screenEntry: async (from) => {
+      if (await inviterMatches(j.commit, from)) return true;
+      if (!strangerIds.has(from.memberId)) {
+        strangerIds.add(from.memberId);
+        strangers += 1;
+      }
+      return false;
+    },
+    onMessage: async (obj, from, epoch) => {
+      if (state.joining !== j) return;
+      const { action } = await screenWelcomeMessage({ obj, from, commit: j.commit, buffered: pending.length });
+      if (action === "stranger") {
+        strangers += 1;
+        return;
+      }
+      if (action !== "keep") return;
+      // The epoch travels with the message: the welcome's opening epoch is
+      // bounded against it, and it cannot be recovered once the message is off
+      // the wire.
+      pending.push({ obj, from, epoch });
+    },
+    onBatch: async () => {
+      // Strangers are reported even when nothing was buffered, because
+      // somebody answering this link who is not the person who sent it is the
+      // one thing the joiner has to hear about, and in the jam it is the only
+      // thing that ever happens.
+      if (state.joining !== j) return;
+      let assembled = { welcome: null, imposters: 0 };
+      if (pending.length) {
+        assembled = await assembleWelcome({
+          identity: j.identity,
+          chanId: j.chanId,
+          commit: j.commit,
+          messages: pending,
+        });
+      }
+      const { welcome } = assembled;
+      const imposters = strangers + assembled.imposters;
+      if (imposters !== j.imposters) {
+        j.imposters = imposters;
+        render();
+      }
+      if (!welcome) return;
+      j.welcomeAt = j.welcomeAt || Date.now();
+      const verdict = welcomeVerdict({ welcome, since: j.welcomeAt, now: Date.now() });
+      if (verdict.action !== "join") {
+        // The seed opened, so this device could join and be unable to
+        // attribute a single re-key afterwards: every one would be dropped for
+        // coming from a member it was never told about, and nothing would say
+        // so. Wait for the rest, then refuse and say why.
+        zero(welcome.seed);
+        if (verdict.action === "wait") return;
+        stopJoinWatch();
+        zero(j.secret);
+        state.joining = null;
+        state.joinIncomplete = { got: verdict.got, want: verdict.want, at: Date.now() };
+        render();
+        return;
+      }
+      // The buffer is the only copy of the welcome there is: the poll loop
+      // will not serve the same message twice, and the inviter has already
+      // re-keyed the circle and burned the invitation by the time it arrives.
+      // It used to be emptied here, BEFORE the await, so a guard that timed
+      // out or a persist that threw lost the join for good and left the device
+      // waiting on a welcome that could never be sent again. It is cleared
+      // only once it has actually been spent, and the next round re-opens it
+      // from the raw messages otherwise.
+      let joined = false;
+      try {
+        joined = await withCircleGuardWaiting(() => completeJoin(j, welcome));
+      } catch (e) {
+        // The poll loop swallows whatever onBatch throws, which is part of why
+        // a lost join was invisible. The messages stay in the buffer and the
+        // next round opens a fresh seed out of them, so this one is zeroed
+        // rather than left in memory, and the failure is written down.
+        window.__starlingErrors.push(`join: ${String(e)}`);
+      } finally {
+        zero(welcome.seed);
+      }
+      if (joined) pending.length = 0;
+    },
+  });
+}
+
+// The circle lands here, at accept time, not when the sheet was filled in:
+// overlays stack and another circle may have been created underneath this one
+// while it was waiting.
+async function completeJoin(j, welcome) {
+  if (state.joining !== j) return false;
+  const addMode = !!state.gen;
+  const outgoing = addMode ? await activeRecord() : null;
+  if (state.sharing) await awaitBye(await setSharing(false));
+  const prev = {
+    gen: state.gen,
+    pinned: state.pinned,
+    genRoster: state.genRoster,
+    invite: state.invite,
+    identity: state.identity,
+    circleName: state.circleName,
+    circleShare: state.circleShare,
+    circles: state.circles,
+  };
+  let opened = null;
+  try {
+    if (addMode) {
+      state.circles = [...state.circles, outgoing];
+      await persistCirclesAtRest();
+    }
+    const now = Date.now();
+    opened = await openGeneration({
+      seed: welcome.seed,
+      g: welcome.g,
+      e0: welcome.e0,
+      historyEpochs: historyEpochs(),
+    });
+    state.gen = opened;
+    state.gen.at = now;
+    state.identity = j.identity;
+    state.pinned = new Map();
+    state.invite = null;
+    // The welcome names the generation's members, so these are the keys that
+    // may re-key it; anyone this device meets later has to be admitted by one
+    // of them first.
+    for (const m of welcome.members) await addPinned(m);
+    // The welcome named these people and the inviter signed for it, so this is
+    // the generation's membership, not a set of first sightings.
+    state.genRoster = new Set(state.pinned.keys());
+    state.rosterPending = null;
+    state.rosterMismatch = null;
+    state.joinIncomplete = null;
+    state.chainDestroyed = false;
+    state.chainWipeFailed = null;
+    state.circleName = j.circleName || prev.circleName;
+    await dbSet("circleName", state.circleName);
+    await persistCircle();
+    state.circleShare = packShare(null);
+    await dbDel("circleShare");
+  } catch (e) {
+    opened?.ratchet.destroy();
+    state.gen = prev.gen;
+    state.pinned = prev.pinned;
+    state.genRoster = prev.genRoster;
+    state.invite = prev.invite;
+    state.identity = prev.identity;
+    state.circleName = prev.circleName;
+    state.circleShare = prev.circleShare;
+    state.circles = prev.circles;
+    await persistCirclesAtRest().catch(() => {});
+    throw e;
+  }
+  if (addMode) prev.gen?.ratchet.destroy();
+  stopJoinWatch();
+  zero(j.secret);
+  state.joining = null;
+  state.me = null;
+  focusedId = null;
+  resetMemberAlerts();
+  sheetAutoOpened = false;
+  mapView?.clearAll();
+  // Whoever let you in is the one identity in this circle you have any way to
+  // check, and the link committed to them before any of this. Their number is
+  // put in front of the joiner rather than left in a sheet nobody opens.
+  state.joinedVia = {
+    memberId: welcome.inviter.memberId,
+    safety: await safetyNumberFor(welcome.inviter.memberId),
+    mine: await safetyNumberFor(state.identity.memberId),
+    at: Date.now(),
+  };
+  if (state.locked) return true;
+  await enterCircle();
+  ui.toast("You joined the circle.");
+  // The wait for an accept can easily outlast someone's patience with a
+  // spinner; if they backgrounded the app, the moment it resolves is exactly
+  // what they are waiting to hear.
+  notifyEvent(t("You're in"), t("Your request was accepted. Your circle is on the map."), "join");
+  // Say hello on the circle channel. Everyone else was told a new member
+  // exists by the re-key that admitted this device, but only its own posts
+  // carry its keys, and until they land nobody can attribute anything it
+  // signs, including a re-key. A check-in carries no position.
+  sendMsg("checkin").catch((e) => window.__starlingErrors.push(`hello: ${String(e)}`));
+  return true;
+}
+
+// ------------------------------------------------------- multiple circles
+
+// One circle mutation at a time. Switch, leave, create, join, rotate, and
+// the two lock transitions all rewrite the same kv slots; two of them
+// interleaving is how secrets get lost, so a second call simply bails while
+// one is in flight. An autolock that fires mid-mutation is deferred to the
+// guard release instead of zeroing key material out from under an await.
+let circleBusy = false;
+let lockPending = false;
+
+function takeCircleGuard() {
+  if (circleBusy) {
+    ui.toast("Hold on, still finishing the last circle change.");
+    return false;
+  }
+  circleBusy = true;
+  return true;
+}
+
+function releaseCircleGuard() {
+  circleBusy = false;
+  if (lockPending) {
+    lockPending = false;
+    lockNow();
+  }
+}
+
+async function withCircleGuard(fn) {
+  if (!takeCircleGuard()) return false;
+  try {
+    return await fn();
+  } finally {
+    releaseCircleGuard();
+  }
+}
+
+// The same guard, for the two callers that must not bail when it is held: an
+// arriving re-key and an arriving welcome are consumed the moment they are
+// decrypted. The poller will not hand either of them over a second time, so
+// dropping one would leave this device on a generation nobody else is on. It
+// waits instead, and gives up loudly rather than waiting forever.
+async function withCircleGuardWaiting(fn, ms = 15000) {
+  const until = Date.now() + ms;
+  while (circleBusy) {
+    if (Date.now() > until) {
+      window.__starlingErrors.push("circle guard held too long: change dropped");
+      return false;
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  circleBusy = true;
+  try {
+    return await fn();
+  } finally {
+    releaseCircleGuard();
+  }
+}
+
+// Give a queued departure "bye" a real chance to reach the old channel
+// before the sender is torn down, without letting a dead network hang the
+// UI: whichever finishes first wins.
+function awaitBye(bye, ms = 1500) {
+  if (!bye || typeof bye.then !== "function") return Promise.resolve();
+  return Promise.race([bye, new Promise((r) => setTimeout(r, ms))]);
+}
+
+// Tear down everything talking to the current channel, exactly as rotation
+// does; nothing may land on the old channel after a switch.
+function teardownNet() {
+  // The window belongs to the generation this device is leaving. Moving again,
+  // locking, switching circles or losing the chain all end it, and the old
+  // keys go with it.
+  endGraceWatch();
+  poller?.stop();
+  poller = null;
+  sender?.cancel();
+  sender = null;
+  roster = null;
+  // A retry still waiting was meant for the channel this teardown is
+  // rotating away from; it must never chase the next one.
+  outbox.clear();
+  stopInviteWatch();
+}
+
+function applyActive(c) {
+  // A circle switch leaves nothing of the old one behind, the held generation
+  // included.
+  endGraceWatch();
+  state.gen?.ratchet.destroy();
+  state.identity = c.identity;
+  state.gen = restoreGeneration(c, c.secret);
+  state.pinned = pinnedMap(c.pinned);
+  state.genRoster = adoptGenRoster(c);
+  // Invitations never travel with a switch; circles.js burns the slot in the
+  // same breath, so memory and disk agree that this circle has none.
+  if (state.invite) zero(state.invite.secret);
+  state.invite = null;
+  state.joinRequests = [];
+  state.keyChanges.clear();
+  state.rosterMismatch = null;
+  state.rosterPending = null;
+  state.joinedVia = null;
+  state.joinIncomplete = null;
+  state.missedRekey = false;
+  state.chainDestroyed = false;
+  state.chainWipeFailed = null;
+  state.lastRekey = null;
+  storedCkEpoch = c.ckEpoch;
+  if (c.profile) state.profile = c.profile;
+  state.circleName = c.name;
+  state.circleShare = packShare(c);
+  state.me = null;
+  lastSentPos = null;
+  focusedId = null;
+  resetMemberAlerts();
+  sheetAutoOpened = false;
+  mapView?.clearAll();
+  $("#focus-card").hidden = true;
+}
+
+// The unguarded body, for callers already inside withCircleGuard. Returns
+// true on a completed switch so sheet code can tell success from a bail.
+async function doSwitchCircle(i) {
+  if (!shareCapable() || state.demo || state.locked) return false;
+  // No active circle to stash: the chain destroyed itself and took it, so
+  // there is nothing to write into the array and this is a promotion, not a
+  // swap. Going through activeRecord() here threw on the dead generation,
+  // which is how a self-destruct also took away the circles it had not
+  // touched.
+  if (!state.gen) return promoteCircle(i);
+  // Sharing never carries across circles: stop it, give the bye a moment to
+  // actually land on the old channel, and let the user turn sharing back on
+  // where they arrive.
+  if (state.sharing) await awaitBye(await setSharing(false));
+  const prev = {
+    gen: state.gen,
+    pinned: state.pinned,
+    genRoster: state.genRoster,
+    invite: state.invite,
+    identity: state.identity,
+    circleName: state.circleName,
+    circleShare: state.circleShare,
+    circles: state.circles,
+  };
+  const outgoing = await activeRecord();
+  teardownNet();
+  try {
+    const res = await switchActive(kv, lockCtx(), {
+      outgoing,
+      circles: state.circles,
+      toIndex: i,
+    });
+    state.circles = res.circles;
+    applyActive(res.active);
+  } catch (e) {
+    // Both chain keys are on disk whatever happened; put memory back on the
+    // circle we were in and keep it live. Autolock is deferred while the
+    // guard is held, so state.locked cannot flip mid-switch; the check is
+    // belt and braces against any future path that locks synchronously.
+    state.gen = prev.gen;
+    state.pinned = prev.pinned;
+    state.genRoster = prev.genRoster;
+    state.invite = prev.invite;
+    state.identity = prev.identity;
+    state.circleName = prev.circleName;
+    state.circleShare = prev.circleShare;
+    state.circles = prev.circles;
+    if (!state.locked) await enterCircle();
+    throw e;
+  }
+  if (state.locked) return false;
+  await enterCircle();
+  ui.toast(t("Switched to {name}.", { name: state.circleName }));
+  return true;
+}
+
+// Make one of the inactive circles active when nothing holds the active slots.
+// leaveActive is exactly this move: it hands the slots to the circle at
+// toIndex and shrinks the array, and boot uses it for the same shape after a
+// crash mid-leave.
+async function promoteCircle(i) {
+  if (!state.circles[i]) return false;
+  const res = await leaveActive(kv, lockCtx(), { circles: state.circles, toIndex: i });
+  if (!res.active) return false;
+  state.circles = res.circles;
+  applyActive(res.active);
+  await enterCircle();
+  ui.toast(t("Switched to {name}.", { name: state.circleName }));
+  return true;
+}
+
+// A timer cannot follow the person into another circle, so it is settled first.
+const switchCircle = async (i) => {
+  if (timerDue() && !state.demo && !state.locked) {
+    if (!(await ui.confirmTimerSwitch(state.circleName))) return false;
+    await doCheckin();
+    if (timerDue() || outbox.pending().includes("checkin")) return false;
+  }
+  return withCircleGuard(() => doSwitchCircle(i));
+};
+
+const leaveCircle = () =>
+  withCircleGuard(async () => {
+    if (!shareCapable() || state.demo || state.locked || !state.gen) return false;
+    if (state.sharing) await awaitBye(await setSharing(false));
+    teardownNet();
+    stopJoinWatch();
+    clearInterval(rekeyTimer);
+    // Last circle: the lock record goes FIRST. If a crash lands between the
+    // deletions, boot sees an intentionally emptied device instead of a lock
+    // screen that no passcode can ever satisfy.
+    const last = state.circles.length === 0;
+    if (last && state.lock?.enabled) {
+      zero(state.vaultKey);
+      state.vaultKey = null;
+      state.lock = null;
+      await dbDel("lock");
+    }
+    let res;
+    try {
+      res = await leaveActive(kv, lockCtx(), { circles: state.circles, toIndex: 0 });
+    } catch (e) {
+      // Storage refused; the active circle is untouched on disk, so bring
+      // its network back instead of leaving a dead map behind the error.
+      await enterCircle();
+      throw e;
+    }
+    if (res.active) {
+      state.circles = res.circles;
+      applyActive(res.active);
+      await enterCircle();
+      ui.toast(t("You left. Now in {name}.", { name: state.circleName }));
+      return true;
+    }
+    // Back where a fresh install starts.
+    state.gen?.ratchet.destroy();
+    state.gen = null;
+    state.identity = null;
+    state.pinned = new Map();
+    state.genRoster = new Set();
+    if (state.invite) zero(state.invite.secret);
+    state.invite = null;
+    state.joinRequests = [];
+    state.keyChanges.clear();
+    storedCkEpoch = -1;
+    state.circleName = "My circle";
+    state.circleShare = packShare(null);
+    state.circles = [];
+    state.me = null;
+    mapView?.clearAll();
+    showScreen("onboarding");
+    // A leave whose deletes did not all take is not a leave that finished, and
+    // saying so is the whole point of `pending`: the roster, the channel id
+    // and a live invitation are still on the disk until boot replays the
+    // journal. Telling the person it is gone would be the one lie this screen
+    // must never tell.
+    ui.toast(
+      res.pending
+        ? "You left, but this device could not erase everything. Open Starling again to finish clearing it."
+        : "You left the circle.",
+      res.pending ? "warn" : "info",
+    );
+    return true;
+  });
+
+function openCircles() {
+  if (!shareCapable()) return;
+  if (state.demo) {
+    ui.toast("Exit the demo first.");
+    return;
+  }
+  if (state.locked) return;
+  if (!state.gen && !state.circles.length) return;
+  ui.openCircleSheet({
+    api,
+    // With no active circle the sheet is a list of circles to go to, so the
+    // current row says there is nothing here rather than naming the circle
+    // that was just erased.
+    current: { name: state.gen ? state.circleName : "No circle" },
+    others: state.circles.map((c) => ({ name: c.name })),
+    onSwitch: switchCircle,
+    onCreate: promptCreate,
+    onJoin: promptPasteInvite,
+  });
+}
+
+// In the wrapper the page lives on an asset origin that means nothing off this
+// device, so invite links always name the canonical web origin instead.
+const inviteLink = () => (state.invite ? inviteLinkFor(state.invite) : "");
+
+function qrColors() {
+  return resolvedTheme() === "light"
+    ? { dark: "#101522", light: "#ffffff" }
+    : { dark: "#0a0d14", light: "#ffffff" };
+}
+
+// The screen that turns trust on first use into a checked identity. It is
+// reachable from the map and from settings, and it follows live state while it
+// is open: keys can change under it.
+function openMembers() {
+  if (state.demo) {
+    ui.toast("Exit the demo to see your circle's keys.");
+    return;
+  }
+  if (!state.gen || state.locked) return;
+  keepLive((done) => ui.openMembersSheet({ api, onClose: done }));
+}
+
+async function openInvite() {
+  if (state.demo) {
+    ui.toast("Exit the demo to invite your people.");
+    return;
+  }
+  if (!state.gen) return;
+  // There is nothing to show until an invitation exists: a v2 link is its own
+  // one-time credential, not a rendering of the circle's key.
+  let link = null;
+  try {
+    link = await createInvite();
+  } catch (e) {
+    window.__starlingErrors.push(`invite: ${String(e)}`);
+  }
+  if (!link) {
+    ui.toast("Could not make an invite link. Try again.", "warn");
+    return;
+  }
+  keepLive((done) =>
+    ui.openInviteSheet({
+      api,
+      getLink: inviteLink,
+      qrSvgFor: (l) => qrSvg(l, qrColors()),
+      onClose: done,
+    }),
+  );
+}
+
+// -------------------------------------------------------------- settings
+
+async function openSettings() {
+  const bioOk = await bioAvailable();
+  const n = native();
+  let tor = null;
+  if (n?.torSupported) {
+    try {
+      if (n.torSupported()) tor = { enabled: !!n.torEnabled() };
+    } catch {
+      tor = null;
+    }
+  }
+  // Only wrappers new enough to hold the page open past the window offer this;
+  // on an older one the switch would be a promise nothing keeps.
+  let keepSharing = null;
+  if (n?.setKeepSharing) {
+    try {
+      keepSharing = { enabled: !!n.keepSharing() };
+    } catch {
+      keepSharing = null;
+    }
+  }
+  const background =
+    typeof n?.batteryState === "function" && !state.demo
+      ? {
+          state: () => {
+            try {
+              return String(native()?.batteryState?.() ?? "optimized");
+            } catch {
+              return "optimized";
+            }
+          },
+          onAllow: askBatteryExemption,
+          onOpen: openBatterySettings,
+          onCopyReport: copyShareReport,
+        }
+      : null;
+  keepLive((done) =>
+    ui.openSettingsSheet({
+      api,
+      onClose: done,
+      onMembers: openMembers,
+      values: {
+        circleName: state.circleName,
+        profile: state.profile || { name: "", emoji: "\u{1F9ED}" },
+        settings: state.settings,
+        share: { precision: activePrecision(), cadence: activeCadence() },
+        // The relay choice is for the wrappers only: the web deployment's
+        // CSP pins connect-src to its own origin, so a cross-origin relay
+        // set there could never be reached. Web self-hosters serve app and
+        // relay from one origin and need no setting.
+        relay: isBundled() ? state.relay || "" : null,
+      },
+      demo: state.demo,
+      tor,
+      keepSharing,
+      background,
+      forward:
+        typeof n?.setForward === "function" && typeof n?.forwardStatus === "function" && !state.demo
+          ? {
+              status: () => forwardStatus(true),
+              onSave: saveForward,
+              onStop: () => saveForward(""),
+              onTid: typeof n?.setForwardTid === "function" ? saveForwardTid : null,
+            }
+          : null,
+      lock: {
+        enabled: !!state.lock?.enabled,
+        hasBio: !!state.lock?.bio,
+        hasDuress: !!state.lock?.duress,
+        bioAvailable: bioOk,
+        autolockMs: state.lock?.autolockMs ?? 60000,
+      },
+      lockActions: {
+        enable: enableLock,
+        disable: disableLock,
+        change: changePasscode,
+        enableBio: enableBiometric,
+        disableBio: disableBiometric,
+        setAutolock,
+        setDuress,
+        clearDuress,
+      },
+      onChange: onSettingChange,
+      onInvite: openInvite,
+      onPlaces: openPlaces,
+      onPanic: panic,
+      onLeave: leaveCircle,
+      onExport: () => {
+        if (state.locked) return;
+        const json = JSON.stringify(
+          buildDataExport({
+            profile: state.profile,
+            settings: state.settings,
+            places: state.places,
+            circles: state.circles.map((c) => ({ name: c.name })),
+            pinned: [...state.pinned.values()],
+            forwardHost: forwardStatus(true)?.host || null,
+          }),
+          null,
+          2,
+        );
+        ui.openExportSheet(json);
+      },
+    }),
+  );
+}
+
+async function onSettingChange(key, value) {
+  if (key === "circleName") {
+    state.circleName = value;
+    await dbSet("circleName", value);
+  } else if (key === "relay") {
+    const norm = normalizeRelay(value);
+    if (String(value).trim() && !norm) {
+      ui.toast("A relay must be an https URL, like https://relay.example.org", "warn");
+      return;
+    }
+    state.relay = norm || "";
+    if (norm) await dbSet("relay", norm);
+    else await dbDel("relay");
+    ui.toast("Relay saved. It applies the next time Starling starts.");
+  } else if (key === "tor") {
+    try {
+      native()?.setTor(!!value);
+    } catch {
+      ui.toast("Could not change the Orbot setting.", "warn");
+    }
+  } else if (key === "keepSharing") {
+    // The wrapper is the one that has to know, and it has to know before a
+    // task removal rather than at the moment of one, so this is the whole
+    // change: no page state, nothing at rest here.
+    try {
+      native()?.setKeepSharing(!!value);
+      ui.toast(
+        value
+          ? t("Closing the app will not stop a share now.")
+          : t("Closing the app stops a share again."),
+      );
+    } catch {
+      ui.toast(t("Could not change that setting."), "warn");
+    }
+  } else if (key === "name" || key === "emoji") {
+    state.profile = { ...(state.profile || {}), [key]: value };
+    await dbSet("profile", state.profile);
+    if (state.sharing && !state.demo) sendLoc(true);
+  } else if (key === "precision" || key === "cadence") {
+    // Both resolved and written together: from here on this circle has its
+    // own pair and the device-wide default no longer speaks for it.
+    state.circleShare = packShare({ precision: activePrecision(), cadence: activeCadence(), [key]: value });
+    if (state.gen) await dbSet("circleShare", state.circleShare);
+    if (key === "cadence") applyCadence();
+    if (key === "precision" && state.sharing && !state.demo) sendLoc(true);
+  } else {
+    state.settings = { ...state.settings, [key]: value };
+    await dbSet("settings", state.settings);
+    if (key === "theme") applyTheme();
+    if (key === "lang") {
+      const code = resolveLocale(value);
+      await loadLocale(code).catch((e) => window.__starlingErrors.push(`locale: ${String(e)}`));
+      setLocale(code);
+      translateDom();
+      ui.toast(t("Language saved. Reopen settings to see them translated too."));
+    }
+    if (key === "basemap" && mapView) {
+      // The demo runs its own basemap through the banner's consent flow;
+      // the choice made here is saved and applied when the demo exits.
+      if (state.demo) ui.toast(t("The demo has its own Real map button. Your choice here applies when you exit."));
+      else mapView.setBasemap(value);
+    }
+    if (key === "history") {
+      state.gen?.ratchet.setHistoryEpochs(historyEpochs(value));
+      // The window just moved, and what is written down has to be what
+      // survived it: an old chain key still on disk is one a seized phone has.
+      await persistRatchet();
+      if (value === "high-risk" && !state.settings.steady) {
+        state.settings = { ...state.settings, steady: true };
+        await dbSet("settings", state.settings);
+        ui.toast("Steady sending is on too, so the relay cannot read your movement from the timing.");
+      }
+    }
+    if (key === "wakeLock") ensureWakeLock();
+    if (key === "trail" && !value && mapView && focusedId) mapView.clearTrail(focusedId);
+  }
+  render();
+}
+
+async function panic() {
+  // Nothing may race the wipe: a queued retry firing between the store's
+  // death and the reload would be this device's last word, sent by a ghost.
+  outbox.clear();
+  sender?.cancel?.();
+  // In the wrapper the bridge runs the same full wipe the PanicKit trigger
+  // does: Keystore wrap key, notification channels, then the OS-level clear
+  // that kills the process. The web wipe below still runs in parallel; if the
+  // OS clear lands first, the process is gone before it matters, and on an
+  // older wrapper without the method it is the whole wipe, as before.
+  try {
+    native()?.cancelShareReminder?.();
+  } catch {
+    // old wrapper
+  }
+  try {
+    native()?.panicWipe?.();
+  } catch {
+    // old wrapper, or a native wipe that threw before its clear
+  }
+  // Belt and suspenders on the same reasoning as the line above: panicWipe
+  // already takes the stop record with it (it lives in the same private
+  // prefs file clearApplicationUserData empties), but that call is
+  // fire-and-forget into a process about to die, so this asks for it
+  // explicitly too rather than trusting the race.
+  try {
+    native()?.clearStopRecord?.();
+  } catch {
+    // old wrapper
+  }
+  await wipeAll();
+  location.reload();
+}
+
+// --------------------------------------------------------------- sharing
+
+// Every share posts on its circle's cadence, movement or no movement. The
+// page's timer and the wrapper's heartbeat both follow it, and both are
+// re-armed here when it changes under a running share.
+function applyCadence() {
+  pushCadence();
+  if (!state.sharing || state.demo) return;
+  clearInterval(shareTimer);
+  shareTimer = setInterval(() => sendLoc(true), cadenceMs());
+}
+
+function pushCadence() {
+  try {
+    native()?.setShareCadence?.(cadenceS());
+  } catch {
+    // an older wrapper without the method
+  }
+}
+
+// How far the clocks may disagree before the relay refuses a post outright.
+const CLOCK_TOLERANCE_MS = MAX_SKEW_EPOCHS * EPOCH_MS;
+
+// The relay refuses a post whose epoch is more than MAX_SKEW_EPOCHS from its
+// own clock, and net.js tags that one rejection with code "clock" rather than
+// letting it read as a network blip. So this is not a guess: the relay said
+// the epoch was outside its tolerance. It has to be loud, because a phone
+// whose clock is wrong is invisible to its circle, and the failure this app
+// can least afford is somebody believing they are being seen when they are
+// not.
+async function noteSendFailure(err) {
+  if (err?.code !== "clock") return;
+  const skewMs = await measureClockSkew();
+  state.clockError = { skewMs, at: Date.now() };
+  const off =
+    skewMs === null || Math.abs(skewMs) < CLOCK_TOLERANCE_MS
+      ? ""
+      : t(" It is about {n} minutes {dir}.", { n: Math.round(Math.abs(skewMs) / 60000), dir: skewMs > 0 ? t("behind") : t("ahead") });
+  ui.toast(t("This phone's clock is wrong, so your circle cannot see you.{off} Turn on automatic date and time.", { off }), "warn");
+  render();
+}
+
+// Server time from the response Date header, corrected for half the round
+// trip so a slow link does not read as a wrong clock. Returns null when there
+// is nothing to measure against.
+async function measureClockSkew() {
+  const chan = channelId();
+  if (!chan) return null;
+  try {
+    const sent = Date.now();
+    const res = await fetch(apiUrl(`/api/v2/f/${chan}?since=${sent}`), {
+      cache: "no-store",
+      signal: typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(10000) : undefined,
+    });
+    const header = res.headers.get("date");
+    if (!header) return null;
+    const server = Date.parse(header);
+    if (!Number.isFinite(server)) return null;
+    const back = Date.now();
+    return server + (back - sent) / 2 - back;
+  } catch {
+    return null;
+  }
+}
+
+// A person turning sharing on is past whatever a swipe or Android stopped last
+// time, and with the share live a card saying the share stopped is no longer
+// true.
+// A Stop from the notification stays: someone tapping it is worth knowing
+// about however many shares later.
+function onShareToggle() {
+  if (!state.sharing && state.stopRecord && state.stopRecord.route !== "notif") {
+    state.stopRecord = null;
+    native()?.clearStopRecord?.();
+  }
+  return setSharing(!state.sharing);
+}
+
+async function setSharing(on, { keepArmed = false } = {}) {
+  if (state.demo) {
+    state.sharing = on;
+    if (!on) state.sosActive = false;
+    render();
+    return;
+  }
+  if (on === state.sharing) return;
+  if (on) {
+    try {
+      native()?.cancelShareReminder?.();
+    } catch {
+      // older wrapper
+    }
+    state.sharing = true;
+    state.geoDenied = false;
+    state.geoFailed = false;
+    shareStats = { startedAt: Date.now(), ok: 0, failed: 0, lastOkAt: 0, lastErr: "", lastErrAt: 0 };
+    sendWhenReady = false;
+    locationPaused = null;
+    healthDismissed.clear();
+    healthAt = 0;
+    // Before the start, so the service's first heartbeat is already this
+    // circle's.
+    pushCadence();
+    stopGeo = startWatch(onFix, onGeoError, { onSignal: onShareSignal, afterEach: pulseWrapper });
+    // startWatch can report an error synchronously and turn sharing back off.
+    if (state.sharing) {
+      // Written down so a share that dies with the process can come back.
+      // Swiping the app away kills the page that seals every position, so the
+      // service ends the share; without this record the app reopened with
+      // sharing quietly off, which is what two people reported from four
+      // phones. Only the fact and the window go down, never a position.
+      await armShare();
+      shareTimer = setInterval(() => sendLoc(true), cadenceMs());
+      // Where the platform gives a web app no background execution at all,
+      // sharing only runs while the screen is on and the app is in front.
+      // Say so and hold the screen, rather than let someone walk away from a
+      // phone they believe is still sharing.
+      if (!canShareInBackground()) startForeground();
+    }
+  } else {
+    state.sharing = false;
+    state.sosActive = false;
+    state.geoFailed = false;
+    shareResumed = false;
+    // Everything that actually stops something happens before the first await.
+    // With the app closed and the page running behind the share service, the
+    // page is hidden, and a hidden page's timers and microtask turnaround are
+    // throttled by the renderer: a storage write awaited here held the location
+    // watch and the send timer up for as long as the renderer felt like it.
+    //
+    // Stopping by hand also ends the countdown; a timer must never outlive
+    // the share it was counting for.
+    clearTimeout(shareDeadlineTimer);
+    shareDeadlineTimer = 0;
+    shareDeadline = null;
+    shareWindowMs = 0;
+    clearInterval(shareTimer);
+    stopGeo?.();
+    stopGeo = null;
+    stopForeground();
+    lastSentPos = null;
+    // Synchronous, before any await: a kept share held the lock off, and a page
+    // with no window cannot promise to get past the next await.
+    armAutoLock();
+    // Only a stop the person chose. One Android made comes back by itself.
+    const remindMs = state.settings.shareReminder;
+    if (!keepArmed && remindMs > 0) {
+      try {
+        native()?.remindShareIn?.(remindMs);
+      } catch {
+        // older wrapper
+      }
+    }
+    // This path is every deliberate end: the toggle, the notification's Stop,
+    // the timer, a circle switch, a lock. None of them should come back by
+    // themselves on the next open, unless Android ended it.
+    if (!keepArmed) await disarmShare();
+    // A caption is a claim about right now; it must not outlive the share.
+    // Cleared BEFORE the bye goes out, so the bye itself carries no caption.
+    clearCaption();
+    // Stopping the share stops every audience, helpers included.
+    endBeacon().catch(() => {});
+    // Returned so circle switches can wait for the departure to actually
+    // reach the old channel before the sender is cancelled; every other
+    // caller ignores it. A bye that misses gets retried from RAM until it
+    // lands, because the alternative is a "live" dot pointing at nobody.
+    const bye = outbox.enqueue("bye");
+    render();
+    return bye;
+  }
+  render();
+}
+
+// The share survives the process, the way the people using it expect.
+//
+// Sharing itself is RAM: state.sharing, the poll timer and the geolocation
+// watch all die with the page. That is why swiping the app away ends a share,
+// and why reopening used to show sharing off with no way back except turning
+// it on again. This records that a share was running, and what was left of its
+// timer, so the next open can put it back.
+//
+// It holds no position and no key, only that sharing was on and how long it
+// had left, which is the same class of fact the wrapper already writes when a
+// share ends. A share the person ended themselves is never recorded.
+const SHARE_ARMED = "shareArmed";
+
+const STOP_ROUTES = new Set(["notif", "swipe", "renderer", "system", "stalled", "lock"]);
+
+async function armShare() {
+  try {
+    await dbSet(SHARE_ARMED, {
+      at: Date.now(),
+      windowMs: shareWindowMs || 0,
+      deadline: shareDeadline || 0,
+    });
+  } catch (e) {
+    // A share that cannot be written down still runs; it just will not come
+    // back by itself, which is the behaviour this replaces.
+    window.__starlingErrors.push(`share arm: ${String(e)}`);
+  }
+}
+
+async function disarmShare() {
+  try {
+    await dbDel(SHARE_ARMED);
+  } catch (e) {
+    window.__starlingErrors.push(`share disarm: ${String(e)}`);
+  }
+}
+
+// Called once per process, at the end of entering a circle, which is also
+// where an unlock lands: a locked device holds no keys, so a share must not
+// come back before the passcode does.
+let shareResumeTried = false;
+
+// True while a share that came back on this open is still running. The stop
+// card is a warning about the app being closed, and it has to stop telling
+// people sharing ended once it plainly has not.
+let shareResumed = false;
+
+async function resumeShareIfArmed() {
+  if (shareResumeTried) return false;
+  shareResumeTried = true;
+  if (state.demo || state.locked || state.sharing || !state.gen || !sender) return false;
+  let armed = null;
+  try {
+    armed = await dbGet(SHARE_ARMED);
+  } catch {
+    return false;
+  }
+  if (!armed) return false;
+  // The wrapper says how the last share ended. A person who pressed Stop on
+  // the notification meant it, so that is not resumed; a swipe, a reboot or
+  // the OS reclaiming the process is not a decision and is.
+  //
+  // Only a Stop that came after this share started counts. Nothing clears the
+  // native record except the card being dismissed, so a Stop from days ago sits
+  // there through every later share, and without the timestamp it would block
+  // each of their resumes in silence. An undated record is treated as a
+  // decision, because refusing to resume is the safe way to be wrong.
+  if (state.stopRecord?.route === "notif" && (Number(state.stopRecord.at) || Infinity) >= (armed.at || 0)) {
+    await disarmShare();
+    return false;
+  }
+  // A window that already ran out while the app was closed is a share that
+  // was supposed to be over.
+  if (armed.deadline && Date.now() >= armed.deadline) {
+    await disarmShare();
+    return false;
+  }
+  await setSharing(true);
+  if (!state.sharing) return false; // permission gone, startWatch refused
+  if (armed.deadline) setShareWindow(Math.max(1000, armed.deadline - Date.now()));
+  shareResumed = true;
+  const ended = (Number(state.stopRecord?.at) || 0) >= (armed.at || 0) ? state.stopRecord?.route : null;
+  ui.toast(
+    ended === "system" || ended === "stalled"
+      ? t("Android had stopped your share in the background. It is back on.")
+      : ended === "lock"
+        ? t("The app lock had ended your share. It is back on.")
+        : t("Sharing was on when the app closed, so it is back on."),
+  );
+  render();
+  return true;
+}
+
+// A share that ends by itself. RAM only, like sharing itself: neither
+// survives the page, so the timer can never claim more than it holds. The
+// expiry goes through setSharing(false), which is the one honest way out:
+// authenticated bye, beacon ended, every audience told.
+let shareDeadline = null;
+let shareDeadlineTimer = 0;
+let shareWindowMs = 0;
+
+function setShareWindow(ms) {
+  clearTimeout(shareDeadlineTimer);
+  shareDeadlineTimer = 0;
+  shareWindowMs = ms || 0;
+  shareDeadline = ms ? Date.now() + ms : null;
+  if (ms) {
+    shareDeadlineTimer = setTimeout(endTimedShare, ms);
+  }
+  render();
+}
+
+// The one way a timed share ends, whether the timer got there first or a fix
+// did. Safe to call twice: the second call finds no deadline and no share.
+function endTimedShare() {
+  if (!shareDeadline && !shareDeadlineTimer) return;
+  clearTimeout(shareDeadlineTimer);
+  shareDeadline = null;
+  shareDeadlineTimer = 0;
+  shareWindowMs = 0;
+  if (!state.sharing) {
+    render();
+    return;
+  }
+  setSharing(false)
+    .then(() => ui.toast(t("Timed share ended. Your circle sees you stopped sharing.")))
+    .catch((e) => window.__starlingErrors.push(`timed share end: ${String(e)}`))
+    .finally(render);
+}
+
+// ------------------------------------------- a share with nobody looking
+//
+// The wrapper thaws a frozen page when told: by the freeze event, or by a push
+// that goes unanswered, since the answer comes from a task a frozen page never
+// runs. The answer carries the posts in flight, so the phone can sleep after.
+
+const pulseChannel = typeof MessageChannel === "function" && isWrapped() ? new MessageChannel() : null;
+if (pulseChannel) {
+  pulseChannel.port1.onmessage = () => tellWrapperAlive();
+  // Node only; an open port would keep the test runner alive.
+  pulseChannel.port1.unref?.();
+  pulseChannel.port2.unref?.();
+}
+
+function tellWrapperAlive() {
+  try {
+    native()?.pulse?.(sendBusy);
+  } catch {
+    // an older wrapper without the method
+  }
+}
+
+function pulseWrapper() {
+  if (!isWrapped()) return;
+  if (pulseChannel) pulseChannel.port2.postMessage(0);
+  else setTimeout(tellWrapperAlive, 0);
+}
+
+document.addEventListener("freeze", () => {
+  try {
+    native()?.pageFrozen?.();
+  } catch {
+    // an older wrapper without the method
+  }
+});
+
+// Your own server. A synchronous bridge call too, and render runs often.
+let forwardCache = null;
+let forwardAt = 0;
+
+function forwardStatus(force = false) {
+  const n = native();
+  if (typeof n?.forwardStatus !== "function") return null;
+  if (!force && forwardAt && Date.now() - forwardAt < 10000) return forwardCache;
+  try {
+    forwardCache = JSON.parse(n.forwardStatus());
+  } catch {
+    forwardCache = null;
+  }
+  forwardAt = Date.now();
+  return forwardCache;
+}
+
+// A hidden second destination for your position is what someone holding your
+// phone would set, so with the app lock on a change needs the passcode.
+async function saveForward(value) {
+  const n = native();
+  if (typeof n?.setForward !== "function") return false;
+  const url = value ? normalizeForward(value) : "";
+  if (url === null) {
+    ui.toast(t("Use a full https address, like https://your-server/owntracks"), "warn");
+    return false;
+  }
+  if (state.lock?.enabled && !(await confirmPasscode())) return false;
+  let saved = false;
+  try {
+    saved = !!n.setForward(url);
+  } catch {
+    saved = false;
+  }
+  forwardAt = 0;
+  if (!saved) {
+    ui.toast(t("That address did not work. Use a full https address."), "warn");
+    return false;
+  }
+  ui.toast(
+    url
+      ? t("While you share, your position also goes to {host}.", { host: new URL(url).hostname })
+      : t("Your position no longer goes to your own server."),
+  );
+  render();
+  return true;
+}
+
+// colota-forwarder routes on tid and Home Assistant names the device from it.
+async function saveForwardTid(value) {
+  const n = native();
+  if (typeof n?.setForwardTid !== "function") return false;
+  const tid = normalizeForwardTid(value ?? "");
+  if (tid === null) {
+    ui.toast(t("Use up to 64 characters for the tracker ID, on one line."), "warn");
+    return false;
+  }
+  let saved = false;
+  try {
+    saved = !!n.setForwardTid(tid);
+  } catch {
+    saved = false;
+  }
+  forwardAt = 0;
+  if (!saved) {
+    ui.toast(t("That tracker ID did not work."), "warn");
+    return false;
+  }
+  ui.toast(tid ? t("Your position goes out as {tid}.", { tid }) : t("Your position goes out with no tracker ID."));
+  return true;
+}
+
+function confirmPasscode() {
+  return new Promise((resolve) => {
+    ui.openPasscodeSheet({
+      title: "Enter your passcode",
+      intro: "Changing where your position goes needs your passcode.",
+      cta: "Continue",
+      wrong: t("That passcode is wrong."),
+      onSubmit: passcodeMatches,
+      onClose: (ok) => resolve(!!ok),
+    });
+  });
+}
+
+async function passcodeMatches(pc) {
+  const K = await openPasscodeRecord(state.lock.pass, pc);
+  if (!K) return false;
+  zero(K);
+  return true;
+}
+
+// A synchronous bridge call, and render runs often.
+let healthCache = null;
+let healthAt = 0;
+
+function currentHealth(force = false) {
+  const n = native();
+  if (typeof n?.health !== "function") return null;
+  if (!force && healthAt && Date.now() - healthAt < 10000) return healthCache;
+  try {
+    healthCache = parseHealth(n.health());
+  } catch {
+    healthCache = null;
+  }
+  healthAt = Date.now();
+  return healthCache;
+}
+
+function onShareSignal(sig) {
+  if (sig.tick) {
+    // A minute with no fix: resend, as the page's own interval would, and no
+    // sooner than that interval.
+    if (state.sharing && (!lastSentPos || Date.now() - lastSentPos.at >= cadenceMs())) sendLoc(true);
+  } else if ("paused" in sig) {
+    locationPaused = sig.paused || null;
+    healthAt = 0;
+  }
+  render();
+}
+
+function callNative(name) {
+  try {
+    native()?.[name]?.();
+  } catch {
+    // an older wrapper without the method
+  }
+}
+
+const openBatterySettings = () => callNative("openBatterySettings");
+const openAppSettingsPage = () => callNative("openAppSettings");
+
+// The camera permission, asked of the wrapper and awaited before the page
+// asks for a stream: the WebView refuses getUserMedia outright while the app
+// lacks the runtime CAMERA grant, prompt or no prompt. Answers come back
+// through a token on a global, like the biometric calls. True wherever
+// there is no bridge to ask, which leaves the browser's own prompt in charge.
+const CAMERA_ASK_TIMEOUT_MS = 120000;
+let cameraTokenN = 0;
+const cameraPending = new Map();
+
+window.__starlingCamera = (token, granted) => {
+  const p = cameraPending.get(token);
+  if (!p) return;
+  cameraPending.delete(token);
+  clearTimeout(p.timer);
+  p.resolve(granted === true);
+};
+
+function askCameraPermission() {
+  const n = native();
+  if (typeof n?.requestCamera !== "function") return Promise.resolve(true);
+  try {
+    if (n.hasCameraPermission?.() === true) return Promise.resolve(true);
+  } catch {
+    // an older wrapper without the method
+  }
+  return new Promise((resolve) => {
+    const token = `c${++cameraTokenN}`;
+    const timer = setTimeout(() => {
+      cameraPending.delete(token);
+      resolve(false);
+    }, CAMERA_ASK_TIMEOUT_MS);
+    cameraPending.set(token, { resolve, timer });
+    try {
+      n.requestCamera(token);
+    } catch {
+      cameraPending.delete(token);
+      clearTimeout(timer);
+      resolve(false);
+    }
+  });
+}
+
+// Asked once. "Not now" is final; Settings keeps the state and the button.
+function askBatteryExemption() {
+  markBatteryAsked();
+  callNative("askBatteryExemption");
+}
+
+function markBatteryAsked() {
+  if (state.settings.batteryAsked) return;
+  state.settings = { ...state.settings, batteryAsked: true };
+  dbSet("settings", state.settings).catch(() => {});
+  render();
+}
+
+function healthCard(problem) {
+  const waveOff = {
+    label: "Got it",
+    testid: `alert-health-ok-${problem}`,
+    onClick: () => {
+      healthDismissed.add(problem);
+      render();
+    },
+  };
+  if (problem === "restricted") {
+    return {
+      id: "health-restricted",
+      kind: "warn",
+      title: t("Android will stop this share when you leave the app"),
+      text: t("Starling's battery use is set to Restricted, so Android stops a share about a minute after the app leaves the screen. Set it to Unrestricted in the app's settings to keep sharing with the screen off."),
+      actions: [{ label: "Open app settings", variant: "btn-primary", testid: "alert-health-battery", onClick: openBatterySettings }, waveOff],
+    };
+  }
+  if (problem === "coarse") {
+    return {
+      id: "health-coarse",
+      kind: "warn",
+      title: t("Starling only has your approximate location"),
+      text: t("With approximate location, Android updates your position roughly and only about every ten minutes, so your circle sees you jump. Allow precise location in the app's settings for a live share."),
+      actions: [{ label: "Open app settings", variant: "btn-primary", testid: "alert-health-precise", onClick: openAppSettingsPage }, waveOff],
+    };
+  }
+  if (problem === "saver") {
+    return {
+      id: "health-saver",
+      kind: "warn",
+      title: t("Battery Saver is turning off your location"),
+      text: t("With Battery Saver on, this phone turns location off while the screen is off, so your circle stops seeing you move. Turn Battery Saver off to keep sharing."),
+      actions: [waveOff],
+    };
+  }
+  if (problem === "optimized" && !state.settings.batteryAsked) {
+    return {
+      id: "health-optimized",
+      kind: "info",
+      title: t("Keep sharing with the screen off"),
+      text: t("Android may pause Starling to save battery while your screen is off, and your circle would stop seeing you move. Letting Starling run in the background stops that. It only makes a difference while you share."),
+      actions: [
+        { label: "Allow", variant: "btn-primary", testid: "alert-health-allow", onClick: askBatteryExemption },
+        { label: "Not now", testid: "alert-health-later", onClick: markBatteryAsked },
+      ],
+    };
+  }
+  // Location off is already on the line under your name and the notification.
+  return null;
+}
+
+// Copied, never sent: the person decides where it goes.
+function buildShareReport() {
+  return shareReport({
+    h: currentHealth(true),
+    page: {
+      version: VERSION,
+      sharing: state.sharing,
+      startedAt: shareStats.startedAt,
+      ok: shareStats.ok,
+      failed: shareStats.failed,
+      lastOkAt: shareStats.lastOkAt,
+      lastErr: shareStats.lastErr,
+      lastErrAt: shareStats.lastErrAt,
+      customRelay: !!state.relay,
+    },
+    now: Date.now(),
+  });
+}
+
+async function copyShareReport() {
+  const text = buildShareReport();
+  try {
+    await navigator.clipboard.writeText(text);
+    ui.toast(t("Sharing report copied. It has no locations and no keys in it."));
+  } catch {
+    ui.toast(t("Could not copy the report."), "warn");
+  }
+}
+
+function onFix(fix) {
+  const first = !state.me;
+  state.me = fix;
+  state.geoDenied = false;
+  state.geoFailed = false;
+  locationPaused = null;
+  // A timed share behind a closed app cannot be left to setTimeout: the page is
+  // hidden and hidden pages get their timers throttled. Each fix the service
+  // pushes runs JS whatever the renderer thinks about timers, so the deadline is
+  // enforced here as well, which keeps a share that was supposed to last twenty
+  // minutes from running until the person opens the app again.
+  if (state.sharing && shareDeadline && Date.now() >= shareDeadline) {
+    endTimedShare();
+    return;
+  }
+  if (first && mapView) mapView.focusOn(fix.lat, fix.lon, 16, 0);
+  // Steady sending posts on the interval alone. Posting again because you
+  // moved is what tells the relay you moved: it cannot read a position, but a
+  // burst of writes when you are walking and silence when you are still is a
+  // movement trace made of timing. With this on the traffic looks the same
+  // either way, and the last known position is simply re-sent.
+  if (
+    state.sharing &&
+    !state.settings.steady &&
+    (!lastSentPos || haversineMeters(lastSentPos.lat, lastSentPos.lon, fix.lat, fix.lon) > 25)
+  ) {
+    sendLoc();
+  } else if (state.sharing && (!lastSentPos || Date.now() - lastSentPos.at >= cadenceMs())) {
+    // The interval timer is a page timer, and with the app closed it barely
+    // runs. The service pushes a fix at least every interval even when the
+    // phone is still, so this is what keeps a closed app's share from going
+    // quiet and looking stopped to everyone watching.
+    sendLoc(true);
+  }
+  render();
+}
+
+// ------------------------------------------------------- foreground session
+
+// iOS gives a web app zero background execution: geolocation is
+// [Exposed=Window], so not even a push-woken service worker can read a
+// position. Sharing there only ever runs with the app in front and the screen
+// on. This holds a wake lock and a running timer so the UI can say that
+// plainly instead of pretending otherwise.
+function startForeground() {
+  if (foreground) return;
+  state.foreground = { active: true, elapsedMs: 0, wakeLock: false, since: Date.now() };
+  foreground = createForegroundSession({
+    onTick: (ms) => {
+      if (!state.foreground) return;
+      state.foreground.elapsedMs = ms;
+      // The running clock is the whole point of the card: it is the evidence
+      // that sharing is still alive on a platform where it dies when you leave.
+      if (state.screen === "map") {
+        renderYou();
+        renderAlerts();
+      }
+    },
+    onWakeLockChange: (on) => {
+      if (state.foreground) state.foreground.wakeLock = on;
+    },
+  });
+  foreground.start();
+  render();
+}
+
+function stopForeground() {
+  if (!foreground) return;
+  const session = foreground;
+  foreground = null;
+  state.foreground = null;
+  session.stop().catch(() => {});
+}
+
+// Every path that ends a share ends the caption with it: the status sheet
+// promises "it clears when you stop sharing", and a promise with exceptions
+// for autolock, geolocation failures, and chain teardown is not a promise.
+function clearCaption() {
+  if (!state.profile?.st) return;
+  state.profile = { ...state.profile, st: "" };
+  dbSet("profile", state.profile).catch(() => {});
+}
+
+function stopSharingInternals() {
+  state.sharing = false;
+  state.sosActive = false;
+  clearCaption();
+  endBeacon().catch(() => {});
+  clearInterval(shareTimer);
+  // Every stop path kills the countdown, not just the toggle: a deadline
+  // that survived a lock or a geo failure would silently end the NEXT share.
+  clearTimeout(shareDeadlineTimer);
+  shareDeadlineTimer = 0;
+  shareDeadline = null;
+  shareWindowMs = 0;
+  stopGeo?.();
+  stopGeo = null;
+  armAutoLock();
+}
+
+function onGeoError(err) {
+  if (err && err.code === 1) {
+    state.geoDenied = true;
+    if (state.sharing) stopSharingInternals();
+  } else if (err && err.native && err.stopped && (err.route === "system" || err.route === "stalled")) {
+    // Android ended it, not the person: stays armed, so opening the app puts it back.
+    const route = err.route;
+    if (state.sharing) setSharing(false, { keepArmed: true });
+    state.stopRecord = { route, at: Date.now() };
+    shareResumeTried = false;
+  } else if (err && err.native) {
+    // The foreground service quit (notification Stop, refused start, no
+    // provider) and will not retry. Anything short of a full stop here would
+    // keep the share timer republishing the last fix as if it were fresh.
+    if (state.sharing) setSharing(false);
+    if (err.stopped) {
+      // Named, not swallowed: a stop from the notification is exactly the
+      // one a person forced to hand over a locked phone needs to see. The
+      // native side already wrote a durable record of this before it got
+      // here; seeing it now means it does not also need to wait for reopen.
+      ui.toast(t("Sharing was stopped from the notification."), "warn");
+      native()?.clearStopRecord?.();
+    } else {
+      ui.toast(t("Location stopped: {reason}", { reason: err.message || t("service error") }), "warn");
+    }
+  } else if (err && err.code === 2 && !navigator.geolocation) {
+    // No geolocation API at all: sharing can never work here.
+    if (state.sharing) stopSharingInternals();
+    ui.toast("Location is not available in this browser.", "warn");
+  } else if (state.sharing && !state.me) {
+    // Timeout or no fix yet: say so instead of claiming the user is visible.
+    if (!state.geoFailed) ui.toast("No location fix yet. Still trying...", "warn");
+    state.geoFailed = true;
+  }
+  render();
+}
+
+async function sendLoc(force = false) {
+  if (!state.sharing || state.demo || !state.me) return;
+  // With location off, resending would show a live dot in the wrong place. An SOS still goes.
+  if (locationPaused && !state.sosActive) return;
+  if (!sender) {
+    sendWhenReady = true;
+    return;
+  }
+  if (!force && lastSentPos && Date.now() - lastSentPos.at < 3000) return;
+  // Every await while busy must settle by itself, or posting ends for good.
+  if (sendBusy) {
+    sendAgain = true;
+    return;
+  }
+  lastSentPos = { lat: state.me.lat, lon: state.me.lon, at: Date.now() };
+  sendBusy++;
+  try {
+    try {
+      await sendMsg(state.sosActive ? "sos" : "loc");
+      shareStats.ok++;
+      shareStats.lastOkAt = Date.now();
+      if (state.clockError) {
+        state.clockError = null;
+        render();
+      }
+    } catch (e) {
+      shareStats.failed++;
+      shareStats.lastErr = sendErrorKind(e);
+      shareStats.lastErrAt = Date.now();
+      // The poll loop surfaces ordinary connectivity trouble; a refused epoch is
+      // not ordinary and gets said out loud. Not awaited: it measures over the network.
+      noteSendFailure(e).catch(() => {});
+    }
+    // Helpers watching the beacon get the same fixes as the circle.
+    if (beacon) await pushBeacon();
+  } finally {
+    sendBusy--;
+  }
+  if (sendAgain && state.sharing) {
+    sendAgain = false;
+    return sendLoc(true);
+  }
+  sendAgain = false;
+  pulseWrapper();
+}
+
+let ownBat = null;
+let ownBatHidden = false;
+
+async function sendMsg(type) {
+  if (state.demo || !sender) return;
+  // A re-key can null the live sender during the battery read below.
+  const via = sender;
+  const fields = {
+    t: type,
+    name: state.profile?.name || "Someone",
+    emoji: state.profile?.emoji || "\u{1F9ED}",
+    hue: myHue(),
+    mode: activePrecision(),
+    // Seconds between posts while still, so a receiver that reads it can wait
+    // that long before calling this phone quiet. Older receivers ignore it.
+    cadence: cadenceS(),
+    // The self-set caption ("omw", "here"). Rides inside the same padded
+    // plaintext as everything else; empty string means no caption.
+    st: (state.profile?.st || "").slice(0, 24),
+  };
+  const due = timerDue();
+  if (due) fields.due = due;
+  if (state.me) {
+    let { lat, lon } = state.me;
+    // Privacy fences: inside a fenced place the circle sees the place's
+    // center, never the spot within it. Snapped BEFORE sealing, exactly
+    // like coarse mode, so the wire carries the same fields either way and
+    // the relay learns nothing, including that fences exist. The SOS and
+    // coarse exemptions live inside fenceSnap, where the tests hold them.
+    const fence = fenceSnap(state.places, lat, lon, {
+      sos: state.sosActive || type === "sos",
+      precision: activePrecision(),
+    });
+    if (activePrecision() === "coarse") {
+      ({ lat, lon } = coarsePos(lat, lon));
+    } else if (fence) {
+      lat = fence.lat;
+      lon = fence.lon;
+    }
+    fields.lat = lat;
+    fields.lon = lon;
+    // A real accuracy radius describes the real fix; sent next to a snapped
+    // point it would say how far the center is from the truth.
+    if (!fence && activePrecision() === "precise" && Number.isFinite(state.me.acc)) {
+      fields.acc = state.me.acc;
+    }
+  }
+  const bat = await batteryLevel();
+  if (bat != null) {
+    fields.bat = bat;
+    ownBat = bat;
+    if (bat > 0.25) ownBatHidden = false;
+  }
+  await via.send(fields);
+}
+
+async function doCheckin() {
+  const wasSos = state.sosActive;
+  state.sosActive = false;
+  const okMsg = wasSos
+    ? "SOS cleared. Your circle sees you checked in."
+    : "Checked in with your circle";
+  if (state.demo) {
+    ui.toast(okMsg);
+    render();
+    return;
+  }
+  if (wasSos) applyCadence();
+  if (timerDue()) clearCheckinTimer();
+  try {
+    await sendMsg("checkin");
+    // Checking in safe cancels a queued SOS retry and is exactly the moment
+    // helpers should stop seeing you.
+    outbox.drop("sos");
+    await endBeacon();
+    ui.toast(okMsg);
+    // The safest action earns the one felt reward on the map.
+    mapView?.pulse("me");
+  } catch (e) {
+    // The circle still sees the SOS, so keep showing it here too.
+    state.sosActive = wasSos;
+    await noteSendFailure(e);
+    if (!state.clockError) {
+      // A clock rejection retries forever pointlessly; anything else is
+      // worth chasing from RAM until it lands.
+      outbox.enqueue("checkin");
+      ui.toast("Check-in not delivered yet. Starling keeps trying.", "warn");
+    }
+  }
+  render();
+}
+
+async function fireSos() {
+  navigator.vibrate?.([120, 60, 120]);
+  state.sosActive = true;
+  // A queued check-in retry is from before this moment; the SOS overrides it.
+  outbox.drop("checkin");
+  // The armed-SOS card, with the cancel instructions and the help-link
+  // button, lives in the sheet body; surface it rather than leave it
+  // behind a drag gesture at exactly the wrong moment.
+  if (sheet && sheet.getSnap() === "peek") sheet.snapTo("half");
+  if (state.demo) {
+    ui.toast("SOS sent to your circle. Tap the check mark to cancel.", "sos");
+    render();
+    return;
+  }
+  // An SOS while not sharing turns sharing on: the circle needs to see you.
+  if (!state.sharing) setSharing(true);
+  else applyCadence();
+  try {
+    await sendMsg("sos");
+    ui.toast("SOS sent to your circle. Tap the check mark to cancel.", "sos");
+  } catch (e) {
+    await noteSendFailure(e);
+    if (!state.clockError) {
+      outbox.enqueue("sos");
+      ui.toast("SOS not delivered yet. Starling keeps trying.", "warn");
+    }
+  }
+  // Your circle is who you chose in advance. An emergency is often the
+  // moment that turns out to be the wrong list: the people who can reach you
+  // are a neighbour, a colleague, whoever is nearby, and none of them are
+  // going to install anything right now. The beacon is a second, separate
+  // share they can open in a browser.
+  //
+  // Re-checked after the await: a location failure can land while the SOS
+  // post is in flight and switch sharing back off, and starting a beacon
+  // then would leave one running with no SOS on screen to end it.
+  if (state.sosActive) startBeaconForSos().catch(() => {});
+  render();
+}
+
+// The beacon runs alongside the circle share on its own channel with its own
+// key and its own signing identity, so handing out a help link never hands
+// out circle history and never links the two channels for the relay.
+async function startBeaconForSos() {
+  if (beacon) return;
+  let started;
+  try {
+    started = await startBeacon();
+  } catch {
+    return;
+  }
+  // Minting is asynchronous, so the SOS can be cancelled while it runs. A
+  // beacon nobody is looking at must not be left posting: end it here, where
+  // the UI that would have switched it off no longer exists.
+  if (!state.sosActive) {
+    started.end().catch(() => {});
+    return;
+  }
+  beacon = started;
+  // One viewer by default, so an SOS still produces a link to hand somebody
+  // without any further tapping. Every extra person gets their own link, their
+  // own channel, and their own revoke.
+  try {
+    sosViewer = await started.addViewer({ label: "Help link", ttlMs: BEACON_TTL_MS });
+    beaconLinks.set(sosViewer.id, sosViewer.link);
+  } catch {
+    sosViewer = null;
+  }
+  await pushBeacon();
+  render();
+}
+
+// A beacon link that outlives the relay's retention is a link to nothing, and
+// an emergency is not a subscription. Six hours, and the viewer page says when
+// it expires.
+const BEACON_TTL_MS = 6 * 60 * 60 * 1000;
+
+// Per-viewer control, for stage 2 to draw: one link each, revocable one at a
+// time, and the rest never notice.
+async function addBeaconViewer(label) {
+  if (!beacon) return null;
+  const viewer = await beacon.addViewer({ label, ttlMs: BEACON_TTL_MS });
+  beaconLinks.set(viewer.id, viewer.link);
+  if (!sosViewer) sosViewer = viewer;
+  await pushBeacon();
+  render();
+  return viewer;
+}
+
+async function revokeBeaconViewer(id) {
+  if (!beacon) return false;
+  await beacon.revokeViewer(id);
+  // The link goes with the channel it named: a revoked viewer's link shows the
+  // session ended, and there is no reason to keep it around to be copied.
+  beaconLinks.delete(id);
+  if (sosViewer?.id === id) sosViewer = null;
+  render();
+  return true;
+}
+
+const beaconViewers = () =>
+  beacon ? beacon.list().map((v) => ({ ...v, link: beaconLinks.get(v.id) || "" })) : [];
+
+async function pushBeacon() {
+  if (!beacon || !state.me) return;
+  const { lat, lon } = state.me;
+  const bat = await batteryLevel();
+  try {
+    await beacon?.send({
+      t: "sos",
+      name: state.profile?.name || "Someone",
+      emoji: state.profile?.emoji || "\u{1F6A8}",
+      hue: myHue(),
+      lat,
+      lon,
+      ...(Number.isFinite(state.me.acc) ? { acc: state.me.acc } : {}),
+      ...(bat != null ? { bat } : {}),
+    });
+  } catch {
+    // the viewer shows the trail going stale rather than a lie
+  }
+}
+
+async function endBeacon() {
+  if (!beacon) return;
+  const b = beacon;
+  beacon = null;
+  sosViewer = null;
+  beaconLinks.clear();
+  await b.end();
+  render();
+}
+
+function openHelpLink() {
+  if (!beacon) return;
+  keepLive((done) =>
+    ui.openHelpSheet({
+      api,
+      onAdd: addBeaconViewer,
+      onRevoke: revokeBeaconViewer,
+      onEnd: endBeacon,
+      onClose: done,
+    }),
+  );
+}
+
+// A system notification through the wrapper, for events that matter while the
+// screen is off or another app is in front. On the open web there is nothing
+// to post through (no push tokens, by design), so the toast is the whole
+// story there. Never fires while the app is visibly on screen: the toast
+// already said it.
+function notifyEvent(title, body, tag, urgent = false) {
+  // The demo is a scripted story. Its fake SOS must never reach the phone's
+  // real notification tray, where nothing marks it as fiction.
+  if (state.demo) return;
+  if (pageShown()) return;
+  const n = native();
+  if (!n?.notify) return;
+  try {
+    n.notify(title, body, tag, urgent);
+  } catch {
+    // an older wrapper without the method
+  }
+}
+
+// Take a posted event notification back down, visibility regardless: an "SOS
+// from X" sitting on the lock screen after X checked in is a false alarm
+// standing. The visible-app path never posted one, and cancel is idempotent.
+function cancelEventNotification(tag) {
+  if (state.demo) return;
+  try {
+    native()?.cancelNotify?.(tag);
+  } catch {
+    // an older wrapper without the method
+  }
+}
+
+// ---------------------------------------------------------- check-in timer
+
+// Plaintext at rest like shareArmed: a deadline and the identity it belongs to.
+const CHECKIN_KEY = "checkinDue";
+let checkinTimer = null;
+let dueTimer = 0;
+let dueWarnedFor = 0;
+// `${memberId}|${due}` pairs the circle was already told about.
+const dueAnnounced = new Set();
+
+const timerDue = () =>
+  checkinTimer && checkinTimer.member === state.identity?.memberId ? checkinTimer.due : null;
+
+function scheduleDueTimer() {
+  clearTimeout(dueTimer);
+  dueTimer = 0;
+  const due = timerDue();
+  if (!due) return;
+  const now = Date.now();
+  const next = [due - DUE_WARN_MS, due + DUE_GRACE_MS].find((at) => at > now);
+  if (!next) return;
+  dueTimer = setTimeout(() => {
+    dueTimer = 0;
+    checkOwnTimer();
+    if (state.screen === "map" && !state.locked) render();
+  }, Math.min(next - now + 50, 0x7fffffff));
+}
+
+// Runs on every poll too, which also covers a timer restored before an unlock.
+function checkOwnTimer(now = Date.now()) {
+  const due = timerDue();
+  if (!due || state.demo) return;
+  if (warnDue(due, now) && dueWarnedFor !== due) {
+    dueWarnedFor = due;
+    const msg = t("Check in within 5 minutes, or your circle is told.");
+    // The lock screen must not say a timer is running.
+    if (!state.locked) ui.toast(msg, "warn");
+    notifyEvent(msg, "", "due-self");
+  }
+  if (!dueTimer) scheduleDueTimer();
+}
+
+async function startCheckinTimer(minutes) {
+  if (state.demo || state.locked || !state.gen || !state.identity) return false;
+  const due = Date.now() + minutes * 60 * 1000;
+  checkinTimer = { due, member: state.identity.memberId };
+  dueWarnedFor = 0;
+  cancelEventNotification("due-self");
+  try {
+    await dbSet(CHECKIN_KEY, checkinTimer);
+  } catch (e) {
+    window.__starlingErrors.push(`timer: ${String(e)}`);
+  }
+  scheduleDueTimer();
+  render();
+  // Posted now so the circle holds the deadline even if this phone goes quiet.
+  const type = state.sosActive ? "sos" : state.sharing ? "loc" : "checkin";
+  try {
+    await sendMsg(type);
+    ui.toast(t("Timer set. Check in by {time}.", { time: fmtClock(due) }));
+  } catch (e) {
+    await noteSendFailure(e);
+    if (!state.clockError && type !== "loc") outbox.enqueue(type);
+    ui.toast(t("Timer set, but your circle does not have it yet. Starling keeps trying."), "warn");
+  }
+  render();
+  return true;
+}
+
+function clearCheckinTimer() {
+  checkinTimer = null;
+  dueWarnedFor = 0;
+  clearTimeout(dueTimer);
+  dueTimer = 0;
+  dbDel(CHECKIN_KEY).catch(() => {});
+  cancelEventNotification("due-self");
+}
+
+async function restoreCheckinTimer() {
+  let raw = null;
+  try {
+    raw = await dbGet(CHECKIN_KEY);
+  } catch {
+    return;
+  }
+  checkinTimer = storedTimer(raw, null, Date.now());
+  if (raw && !checkinTimer) dbDel(CHECKIN_KEY).catch(() => {});
+  scheduleDueTimer();
+}
+
+function openCheckinTimer() {
+  if (state.demo) {
+    ui.toast("Exit the demo to set a check-in timer.");
+    return;
+  }
+  if (!state.gen) return;
+  keepLive((done) =>
+    ui.openCheckinTimerSheet({
+      api: { due: timerDue, sharing: () => state.sharing },
+      onStart: startCheckinTimer,
+      onCheckin: doCheckin,
+      onShare: () => setSharing(true),
+      onClose: done,
+    }),
+  );
+}
+
+// ---------------------------------------------------------------- status UI
+
+function openStatus() {
+  if (state.demo) {
+    ui.toast("Exit the demo to set a status.");
+    return;
+  }
+  if (!state.gen) return;
+  ui.openStatusSheet({
+    current: state.profile?.st || "",
+    onSet: async (st) => {
+      state.profile = { ...(state.profile || {}), st };
+      await dbSet("profile", state.profile);
+      if (state.sharing) {
+        sendLoc(true);
+        ui.toast(st ? "Status set." : "Status cleared.");
+      } else if (st) {
+        ui.toast("Saved. Your circle sees it once you start sharing.");
+      }
+      render();
+    },
+  });
+}
+
+// ---------------------------------------------------------------- places UI
+
+function openPlaces() {
+  if (state.demo) {
+    // Editing the real list mid-demo would push it into the tracker that is
+    // currently holding the demo's invented spots. One gate closes the race.
+    ui.toast("Exit the demo to edit your places.");
+    return;
+  }
+  mapView?.cancelPick();
+  keepLive((done) =>
+    ui.openPlacesSheet({
+      api: { places: () => state.places },
+      onClose: done,
+      onAdd: async (name) => {
+        if (!state.me || !Number.isFinite(state.me.lat)) {
+          ui.toast("No position yet. Start sharing first, or pick the spot on the map.", "warn");
+          return false;
+        }
+        await addPlace(name, state.me.lat, state.me.lon);
+        ui.toast(t("{name} saved. Only this phone knows it exists.", { name }));
+        return true;
+      },
+      onPick: (name) => {
+        ui.toast(t("Tap the map where {name} is.", { name }));
+        mapView.startPick(async ({ lat, lon }) => {
+          if (state.locked || state.demo) return;
+          await addPlace(name, lat, lon);
+          ui.toast(t("{name} saved. Only this phone knows it exists.", { name }));
+          openPlaces();
+        });
+      },
+      onRename: async (id, name) => {
+        state.places = state.places.map((p) => (p.id === id ? { ...p, name } : p));
+        await savePlaces();
+      },
+      onRadius: async (id, radius) => {
+        state.places = state.places.map((p) => (p.id === id ? { ...p, radius } : p));
+        await savePlaces();
+      },
+      onFence: async (id, on) => {
+        state.places = state.places.map((p) => (p.id === id ? { ...p, fence: !!on } : p));
+        await savePlaces();
+      },
+      onAlerts: async (id, alerts) => {
+        state.places = state.places.map((p) => (p.id === id ? { ...p, alerts } : p));
+        await savePlaces();
+      },
+      onRemove: async (id) => {
+        state.places = state.places.filter((p) => p.id !== id);
+        await savePlaces();
+      },
+    }),
+  );
+}
+
+function checkAlerts() {
+  const now = Date.now();
+  checkOwnTimer(now);
+  // Your own position feeds the tracker too, so the sheet can say where you
+  // are. It never fires an announcement: you were there.
+  if (state.me && Number.isFinite(state.me.lat)) {
+    placeTracker.update(SELF_KEY, state.me.lat, state.me.lon, { now, acc: state.me.acc });
+  }
+  for (const rec of members()) {
+    const st = displayStatus(rec, now);
+    const prev = prevStatus.get(rec.id);
+    const who = rec.name || t("A member");
+    if (st === "sos" && prev !== "sos") {
+      sosQuietTold.delete(rec.id);
+      sosCardHidden.delete(rec.id);
+      ui.toast(t("SOS from {who}", { who: rec.name || t("a member") }), "sos");
+      navigator.vibrate?.([160, 80, 160, 80, 240]);
+      notifyEvent(t("SOS from {who}", { who }), t("Open Starling to see their live position."), `sos-${rec.id}`, true);
+    } else if (st === "checkin" && prev === "sos") {
+      ui.toast(t("{who} checked in", { who }));
+      cancelEventNotification(`sos-${rec.id}`);
+      notifyEvent(t("{who} checked in", { who }), t("The SOS is cleared."), `sos-${rec.id}`);
+    }
+    prevStatus.set(rec.id, st);
+
+    if (st === "sos" && statusOf(rec, now) === "stale" && !sosQuietTold.has(rec.id)) {
+      sosQuietTold.add(rec.id);
+      const msg = t("{who}'s SOS went quiet", { who });
+      ui.toast(msg, "warn");
+      notifyEvent(msg, t("Their last position is on the map."), `sos-${rec.id}`, true);
+    }
+
+    if (overdue(rec, now)) {
+      const key = `${rec.id}|${rec.due}`;
+      if (!dueAnnounced.has(key)) {
+        dueAnnounced.add(key);
+        const msg = t("{who} missed their check-in", { who });
+        ui.toast(msg, "warn");
+        notifyEvent(msg, t("Their last position is on the map."), `due-${rec.id}`, true);
+      }
+    } else {
+      let told = false;
+      for (const key of dueAnnounced) {
+        if (key.startsWith(`${rec.id}|`)) {
+          dueAnnounced.delete(key);
+          told = true;
+        }
+      }
+      if (told) cancelEventNotification(`due-${rec.id}`);
+    }
+
+    // Place transitions are tracked whether or not announcements are on, so
+    // the "At Home" line stays truthful either way.
+    if (Number.isFinite(rec.lat) && Number.isFinite(rec.lon)) {
+      const evs = placeTracker.update(rec.id, rec.lat, rec.lon, {
+        mode: rec.mode,
+        ts: rec.ts,
+        now,
+        acc: rec.acc,
+      });
+      if (state.settings.placeAlerts) {
+        for (const ev of evs) {
+          if (!announces(placeTracker.places().find((p) => p.id === ev.placeId), ev.type)) continue;
+          const msg =
+            ev.type === "arrive" ? t("{who} arrived at {place}", { who, place: ev.placeName }) : t("{who} left {place}", { who, place: ev.placeName });
+          ui.toast(msg);
+          navigator.vibrate?.(80);
+          notifyEvent(msg, "", `place-${rec.id}`);
+        }
+      }
+    }
+
+    if (state.settings.batAlerts && typeof rec.bat === "number") {
+      if (rec.bat < 0.15 && !batWarned.has(rec.id)) {
+        batWarned.add(rec.id);
+        const pct = Math.max(1, Math.round(rec.bat * 100));
+        const msg = t("{who}'s phone is at {pct}%", { who, pct });
+        ui.toast(msg, "warn");
+        notifyEvent(msg, t("Their dot may go dark soon."), `bat-${rec.id}`);
+      } else if (rec.bat > 0.25) {
+        if (batWarned.delete(rec.id)) cancelEventNotification(`bat-${rec.id}`);
+      }
+    }
+  }
+}
+
+// ------------------------------------------------------------------ demo
+
+function startDemo() {
+  if (state.demo) return;
+  mapView?.cancelPick();
+  if (state.sharing) setSharing(false);
+  state.demo = true;
+  state.sharing = true;
+  state.sosActive = false;
+  poller?.stop();
+  resetMemberAlerts();
+  // The demo tours Places with its own invented spots. The tracker and the
+  // map swap to them here and back to the real list on exit; the stored
+  // list is never touched, and savePlaces cannot run mid-demo (openPlaces
+  // is demo-gated), so nothing can persist these.
+  placeTracker.setPlaces(demoPlaces());
+  demo = createDemo({
+    profile: state.profile,
+    onTick: (list, me) => {
+      demoMembers = list;
+      state.me = { lat: me.lat, lon: me.lon, ts: me.ts };
+      checkAlerts();
+      render();
+    },
+  });
+  showMap();
+  // The demo starts off-grid: no tiles, no network. Real tiles load only
+  // through the banner's consent flow, and the user's saved basemap comes
+  // back on exit.
+  demoMapOn = false;
+  demoMapAsk = false;
+  mapView.setBasemap("none");
+  mapView.setPlaces(demoPlaces());
+  demo.start();
+  mapView.fitAll([DEMO_CENTER, ...demoMembers]);
+  render();
+}
+
+// The toggle only ever asks on the way in; turning tiles off is one press.
+function toggleDemoMap() {
+  if (demoMapOn) {
+    demoMapOn = false;
+    mapView.setBasemap("none");
+    render();
+    return;
+  }
+  demoMapAsk = true;
+  render();
+  // The consent just appeared out of the button's own row; put focus on its
+  // accept so a keyboard or screen-reader user lands on the question.
+  $("#banner-demo-consent-go").focus?.();
+}
+
+function loadDemoMap() {
+  demoMapAsk = false;
+  demoMapOn = true;
+  mapView.setBasemap(resolvedTheme());
+  render();
+}
+
+function cancelDemoMap() {
+  demoMapAsk = false;
+  render();
+}
+
+function exitDemo() {
+  demo?.stop();
+  demo = null;
+  state.demo = false;
+  demoMapOn = false;
+  demoMapAsk = false;
+  state.sharing = false;
+  state.sosActive = false;
+  demoMembers = [];
+  state.me = null;
+  focusedId = null;
+  $("#focus-card").hidden = true;
+  resetMemberAlerts();
+  for (const id of mapView.markerIds()) mapView.removeMarker(id);
+  // The saved basemap comes back only when there is a circle to show. A
+  // hosted-site visitor who never consented to tiles exits to onboarding,
+  // and restoring the default street basemap here would fetch them anyway.
+  mapView.setBasemap(state.gen ? state.settings.basemap : "none");
+  // The real places come back exactly as stored; the demo's spots die here.
+  placeTracker.setPlaces(state.places);
+  mapView.setPlaces(state.places);
+  if (state.gen) {
+    poller?.start();
+    showMap();
+  } else {
+    showScreen("onboarding");
+  }
+  render();
+}
+
+// -------------------------------------------------------------- wake lock
+
+async function ensureWakeLock() {
+  // A running foreground session already owns a screen lock and re-acquires it
+  // on every resume; two requests for the same thing is one of them leaking.
+  const want =
+    state.settings.wakeLock &&
+    !foreground &&
+    state.screen === "map" &&
+    pageShown();
+  try {
+    if (want && !wakeLock && navigator.wakeLock?.request) {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => {
+        wakeLock = null;
+      });
+    } else if (!want && wakeLock) {
+      const lock = wakeLock;
+      wakeLock = null;
+      await lock.release();
+    }
+  } catch {
+    wakeLock = null;
+  }
+}
+document.addEventListener("visibilitychange", ensureWakeLock);
+
+// ------------------------------------------------------------------- api
+//
+// The surface the screens are drawn against. Everything here is safe to call
+// from a sheet: each one takes the circle guard where it needs to, and each
+// returns something honest about whether the thing happened. Extra fields on
+// the sheet arguments below carry it in; the debug handle is for the automated
+// checks.
+const api = {
+  state,
+  members,
+  checkinDue: () => timerDue(),
+  // invitations
+  createInvite,
+  burnInvite,
+  inviteLink,
+  invite: () => state.invite,
+  joinRequests: () => state.joinRequests,
+  acceptJoin,
+  rejectJoin,
+  joining: () => state.joining,
+  cancelJoin,
+  // membership
+  pinnedList: () => [...state.pinned.values()],
+  // Pinned members whose phones have been quiet long enough that a re-key
+  // right now risks stranding them (they would miss the new keys and need a
+  // fresh invite). Read by the accept and new-keys confirmations.
+  staleNames: () => {
+    const now = Date.now();
+    const last = new Map(members().map((r) => [r.id, r.ts]));
+    const out = [];
+    for (const [id] of state.pinned) {
+      if (id === state.identity?.memberId) continue;
+      const ts = last.get(id);
+      if (!ts || now - ts > 60 * 60 * 1000) out.push(displayName(id));
+    }
+    return out;
+  },
+  keyChanges: () => [...state.keyChanges.entries()].map(([memberId, c]) => ({ memberId, ...c })),
+  acceptKeyChange,
+  markVerified,
+  safetyNumberFor,
+  // Safety number as a code, and a scanned code checked against the pinned
+  // roster. The scanner lives in the app: the hosted site's headers deny the
+  // camera, and a browser tab is not where a circle is checked anyway.
+  safetyQrText: async () => {
+    const me = state.identity?.memberId;
+    const number = me ? await safetyNumberFor(me) : null;
+    return me && number ? safetyQrText(me, number) : null;
+  },
+  checkSafetyQr: (text) => checkSafetyQr(text, state.pinned),
+  decodeQr,
+  askCamera: askCameraPermission,
+  canScanQr: () => isBundled() && typeof navigator.mediaDevices?.getUserMedia === "function",
+  qrSvgFor: (text) => qrSvg(text, qrColors()),
+  rekeyCircle,
+  removeMember,
+  rosterMismatch: () => state.rosterMismatch,
+  missedRekey: () => state.missedRekey,
+  // settings and status
+  setSetting: onSettingChange,
+  historyChoices: HISTORY_CHOICES,
+  clockError: () => state.clockError,
+  foreground: () => state.foreground,
+  retired: () => state.retired,
+  // beacon
+  beaconViewers,
+  addBeaconViewer,
+  revokeBeaconViewer,
+};
+if (debugHooks()) window.__starlingApi = api;
+
+// The internals the automated checks drive directly, because the alternative
+// is a check that exercises a copy of the rule instead of the rule. The last
+// round of defects shipped exactly that way: a member cap verified against a
+// bare Map while the app passed a duck-typed store with no size on it. Nothing
+// here is a new exposure, since __starlingApi already hands out the live state
+// object, and script running in this page is inside the circle already.
+if (debugHooks()) window.__starlingInternals = {
+  state,
+  pinnedStore,
+  roster: () => roster,
+  checkinDue: () => timerDue(),
+  startCheckinTimer,
+  restoreCheckinTimer,
+  addPinned,
+  acceptKeyChange,
+  onKeyChange,
+  adoptRekey,
+  enterCircle,
+  onControl,
+  unlockWith,
+  syncRatchet,
+  persistRatchet,
+  startJoinWatch,
+  alertItems,
+  onShareToggle,
+  armAutoLock,
+  lockArmed: () => lockTimer !== 0,
+  lockNow,
+  switchCircle,
+  writeChainKey,
+  joinWithInvite,
+  promptJoin,
+  inviteLinkFor,
+  adoptRelay,
+  saveStartRelay,
+  boot,
+  DESTROYED_KEY,
+  writePlacesAtRest,
+  loadPlaces,
+  savePlaces,
+  addPlace,
+  setDuress,
+  clearDuress,
+  checkAlerts,
+  placeTracker,
+  resetMemberAlerts,
+  startDemo,
+  exitDemo,
+  toggleDemoMap,
+  loadDemoMap,
+  cancelDemoMap,
+  outbox,
+  setShareWindow,
+  stopSharingInternals,
+  shareStatus: () => ({ deadline: shareDeadline, windowMs: shareWindowMs }),
+  notifyEvent,
+  panic,
+  setSharing,
+  setupNet,
+  resumeShareIfArmed,
+  sendLoc,
+  onShareSignal,
+  activePrecision,
+  shareCadence: cadenceS,
+  applyCadence,
+  activeRecord,
+  fireSos,
+  doCheckin,
+  sendStatus: () => ({ busy: sendBusy, again: sendAgain, whenReady: sendWhenReady, stats: { ...shareStats }, locationPaused }),
+  buildShareReport,
+  healthCard,
+  saveForward,
+  saveForwardTid,
+  forwardStatus,
+  passcodeMatches,
+  rewrapPasscodeIfNeeded,
+  resetForwardCache: () => {
+    forwardAt = 0;
+  },
+  inviteFromText,
+  inviteScanProblem,
+  joinFromScan,
+  hasSender: () => !!sender,
+  teardownNet,
+  resetShareResumeGuard: () => {
+    shareResumeTried = false;
+    shareResumed = false;
+  },
+};
+
+// ----------------------------------------------------------------- boot
+
+window.addEventListener("online", () => {
+  state.offline = false;
+  syncRatchet().catch(() => {});
+  poller?.pollNow();
+  // A working network just showed itself: anything still owed to the
+  // circle goes now.
+  outbox.flush();
+  render();
+});
+
+// Coming back to the app is exactly when expired keys have to go: a phone that
+// has been off for a week is holding a week of chain keys until something walks
+// them forward, and nothing else does.
+document.addEventListener("visibilitychange", () => {
+  if (!pageShown() || state.locked) return;
+  syncRatchet().catch(() => {});
+  healthAt = 0;
+  if (!state.sharing && (state.stopRecord?.route === "system" || state.stopRecord?.route === "stalled")) {
+    resumeShareIfArmed().catch((e) => window.__starlingErrors.push(`share resume: ${String(e)}`));
+  }
+  render();
+});
+window.addEventListener("offline", () => {
+  state.offline = true;
+  render();
+});
+
+// An invite link opened into an already-loaded tab arrives as a same-document
+// hash change; treat it exactly like a fresh boot with a fragment.
+window.addEventListener("hashchange", () => {
+  const invite = parseInviteFragment(location.hash);
+  if (!invite) return;
+  history.replaceState(null, "", location.pathname + location.search);
+  // Hosted web never joins; the landing card points the invite at the app.
+  if (!shareCapable()) {
+    $("#landing-invite").hidden = false;
+    return;
+  }
+  // A locked circle must be unlocked before any join can touch its state.
+  if (state.locked) return;
+  promptJoin(invite);
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (ui.closeTopOverlay()) return;
+  if (focusedId) {
+    unfocus();
+    return;
+  }
+  if (sheet && sheet.getSnap() === "full") sheet.snapTo("half");
+  else if (sheet && sheet.getSnap() === "half") sheet.snapTo("peek");
+});
+
+async function boot() {
+  // Everything downstream needs WebCrypto and IndexedDB. A secure context
+  // without them is an outdated engine and gets a plain explanation instead
+  // of a page of silent errors. An insecure context also lacks crypto.subtle,
+  // but that case keeps its own banner and degraded boot below.
+  if (!insecureContext && (!globalThis.crypto?.subtle || !globalThis.indexedDB)) {
+    $("#screen-oldweb").hidden = false;
+    $("#screen-onboarding").hidden = true;
+    return;
+  }
+
+  // A stop that happened outside the page (notification Stop, task swipe)
+  // while nobody was here to see it. The card stays up until dismissed, so a
+  // reopen that misses this render still finds it on the next one.
+  //
+  // Read here rather than after the circle is entered: resumeShareIfArmed
+  // asks whether the last share was ended by a person or by the process
+  // dying, and it runs at the end of entering a circle, so the answer has to
+  // be in hand before that.
+  if (isWrapped()) {
+    try {
+      const raw = native()?.readStopRecord?.();
+      if (raw) {
+        const rec = JSON.parse(raw);
+        if (rec && STOP_ROUTES.has(rec.route)) state.stopRecord = rec;
+      }
+    } catch {
+      // a malformed native record is not worth failing boot over
+    }
+  }
+
+  const params = new URLSearchParams(location.search);
+  const invite = parseInviteFragment(location.hash);
+  if (invite) history.replaceState(null, "", location.pathname + location.search);
+
+  // The installed app is the app, not a copy of the website. The marketing
+  // sections (how it works, features, the honesty table, FAQ, the download
+  // card, the big footer) exist to convince a visitor; a person inside the
+  // app is convinced. They get the start screen and one link out to the
+  // site for the long version. Removal, not hiding: no screen this app can
+  // show should carry a "Download the APK" button. Nothing has painted yet
+  // (every screen starts hidden), so there is no flash to race.
+  if (isBundled()) {
+    for (const n of document.querySelectorAll(".web-only")) n.remove();
+    const about = document.getElementById("ob-about");
+    if (about) about.hidden = false;
+    byTestid("onboarding-relay")?.addEventListener("click", promptStartRelay);
+  }
+
+  byTestid("onboarding-demo").addEventListener("click", startDemo);
+  // The install nudge only becomes offerable when Chromium fires its event,
+  // which lands after boot; platform.js captures it, this repaints for it.
+  window.addEventListener("beforeinstallprompt", () => setTimeout(render, 0));
+  if (shareCapable()) {
+    byTestid("onboarding-create").addEventListener("click", promptCreate);
+    byTestid("onboarding-join").addEventListener("click", promptPasteInvite);
+    byTestid("join-cancel").addEventListener("click", cancelJoin);
+  } else {
+    // Hosted web: circles are app-only, so the create and join paths do not
+    // exist here at all. The app card leads, the demo trails it.
+    byTestid("onboarding-create").hidden = true;
+    byTestid("onboarding-join").hidden = true;
+    const wrap = $("#screen-onboarding .ob-wrap");
+    wrap.insertBefore($("#landing-app"), $("#screen-onboarding .ob-actions"));
+  }
+
+  // Ask the OS not to evict our store under storage pressure. Wrappers only:
+  // a WebView grants or denies silently, while desktop Firefox turns a bare
+  // persist() into a permission prompt the web app never used to show.
+  if (isBundled()) navigator.storage?.persist?.().catch(() => {});
+
+  // The landing's download card is for browser visitors; an installed PWA
+  // does not advertise itself to itself. In the wrapper the card is not
+  // hidden but gone: the web-only removal above already took it out.
+  if (matchMedia("(display-mode: standalone)").matches) {
+    const dl = $("#landing-app");
+    if (dl) dl.hidden = true;
+  }
+
+  // A last-circle leave that a crash cut short left its journal behind. Finish
+  // the purge before a single slot is read: the leftovers are a generation
+  // record and a roster for a circle the user has already been told is gone,
+  // and read first they look enough like a circle to be entered.
+  await finishPendingLeave(kv);
+
+  // Persistence is optional. If the store cannot be read, boot with defaults
+  // to onboarding instead of a dead page.
+  let secret = null;
+  let identity = null;
+  let lock = null;
+  let storedCircles = null;
+  // Why this device is empty, when it is empty. Read on BOTH paths: the locked
+  // one used it to keep a lock record alive, and the unlocked one, which is
+  // what the app ships with, did not read it at all.
+  let destroyed = false;
+  try {
+    const [sec, id, profile, settings, circleName, share, lk, relay, circs, noInstall, mark] = await Promise.all([
+      dbGet("secret"),
+      dbGet("identity"),
+      dbGet("profile"),
+      dbGet("settings"),
+      dbGet("circleName"),
+      dbGet("circleShare"),
+      dbGet("lock"),
+      dbGet("relay"),
+      dbGet("circles"),
+      dbGet("installDismissed"),
+      dbGet(DESTROYED_KEY),
+    ]);
+    secret = sec;
+    identity = id;
+    lock = lk;
+    destroyed = !!mark;
+    storedCircles = Array.isArray(circs) ? circs : null;
+    if (profile) state.profile = profile;
+    if (settings) state.settings = { ...state.settings, ...settings };
+    if (circleName) state.circleName = circleName;
+    state.circleShare = packShare(share);
+    if (typeof relay === "string") state.relay = relay;
+    state.installDismissed = !!noInstall;
+  } catch (e) {
+    window.__starlingErrors.push(`store: ${String(e)}`);
+  }
+  // The API base is fixed for this run before any poller or sender is built.
+  setApiBase(state.relay);
+  applyTheme();
+  // Language before anything paints: every screen starts hidden, so the
+  // static page translates exactly once with no flash of English.
+  const locale = resolveLocale(state.settings.lang);
+  await loadLocale(locale).catch((e) => window.__starlingErrors.push(`locale: ${String(e)}`));
+  setLocale(locale);
+  translateDom();
+
+  if (!shareCapable()) {
+    // Hosted web: landing and demo only. A circle stored by the old web app
+    // is never opened or decrypted here (its bytes are only tested for
+    // existence); the card offers the eraser instead. An invite fragment
+    // gets pointed at the app (the secret was already stripped from the
+    // address bar above and never leaves the device).
+    if (lock?.enabled || (secret && identity) || storedCircles?.length) {
+      $("#landing-legacy").hidden = false;
+      byTestid("landing-erase").addEventListener("click", async () => {
+        await wipeAll();
+        location.reload();
+      });
+    }
+    if (invite) $("#landing-invite").hidden = false;
+    showScreen("onboarding");
+    if (params.get("demo") === "1") startDemo();
+  } else {
+    try {
+      // What this launch is looking at, on the evidence of the slots, the lock
+      // record and the mark. The reads and the purges are here; which of the
+      // seven shapes this is belongs to bootVerdict.
+      let sealedSecret = null;
+      let sealedCircles = null;
+      let sealedGen = null;
+      let sealedStaged = null;
+      if (lock?.enabled) {
+        // A locked circle starts locked on every launch. Nothing is decrypted
+        // until the passcode or a biometric recovers the vault key. Plaintext
+        // slots a crash mid-lock-enable left behind are purged ONLY when
+        // their sealed twin actually exists: before that point the plaintext
+        // is the only copy there is.
+        [sealedSecret, sealedCircles, sealedGen, sealedStaged] = await Promise.all([
+          dbGet("vaultSecret"),
+          dbGet("vaultCircles"),
+          dbGet(GEN_SLOT.sealed),
+          dbGet(STAGED_SLOT.sealed),
+        ]);
+        if (sealedSecret) await dbDel("secret");
+        if (sealedCircles) await dbDel("circles");
+        if (sealedGen) await dbDel(GEN_SLOT.plain);
+        if (sealedStaged) await dbDel(STAGED_SLOT.plain);
+        if (await dbGet(PINNED_SLOT.sealed)) await dbDel(PINNED_SLOT.plain);
+        if (await dbGet(INVITE_SLOT.sealed)) await dbDel(INVITE_SLOT.plain);
+      } else {
+        // No lock record means any sealed copies are strays from an
+        // interrupted lock transition; the plaintext is authoritative.
+        for (const k of SEALED_KEYS) await dbDel(k);
+      }
+      const found = bootVerdict({
+        lockEnabled: !!lock?.enabled,
+        sealedSecret,
+        sealedGen,
+        sealedStaged,
+        sealedCircles,
+        secret,
+        identity,
+        circles: storedCircles,
+        destroyed,
+      });
+      if (found.kind === "stale-lock") {
+        // Nothing to protect in either form: a crash mid last-circle leave
+        // left a stale lock record. Clear it rather than present a lock no
+        // passcode can satisfy.
+        await dbDel("lock");
+        showScreen("onboarding");
+      } else if (found.kind === "v1") {
+        // v1 wrote a circle root and no generation record. It is not a chain
+        // key, it names no channel a v2 relay serves, and a v1 client could
+        // not talk to that relay anyway.
+        showV1Notice();
+      } else if (found.kind === "locked") {
+        state.lock = lock;
+        state.locked = true;
+        ensureLockUI();
+        paintLockScreen();
+        showScreen("lock");
+      } else if (found.kind === "active") {
+        const slots = await readActiveSlots(null, secret);
+        if (slotsVerdict({ identity, meta: slots.meta }).kind === "v1") {
+          showV1Notice();
+        } else {
+          adoptActive(slots);
+          if (storedCircles?.length) {
+            // A torn writeActive can pair this chain key with another circle's
+            // identity or another circle's generation; the array still holds
+            // the properly paired record, so adopt it before anything
+            // announces the wrong pseudonym or posts under a key that channel
+            // cannot read.
+            const paired = adoptPairedCircle({
+              activeSecret: slots.ck,
+              activeMemberId: state.identity.memberId,
+              activeGen: state.gen,
+              circles: storedCircles,
+            });
+            if (paired) {
+              applyActive(paired);
+              await dbSet("identity", paired.identity);
+              await dbSet("circleName", paired.name);
+              await dbSet("circleShare", state.circleShare);
+              if (paired.profile) await dbSet("profile", paired.profile);
+              await writeGenAtRest();
+            }
+            // A crash mid-switch can leave the active circle duplicated in the
+            // inactive array; reconcile drops the copy.
+            state.circles = reconcileCircles({
+              activeSecret: state.gen.ratchet.snapshot().ck0,
+              activeMemberId: state.identity.memberId,
+              circles: storedCircles,
+            });
+            if (state.circles.length !== storedCircles.length) await persistCirclesAtRest();
+          }
+          await enterCircle();
+        }
+      } else if (found.kind === "promote") {
+        // A crash mid-leave can clear the active slots with circles still
+        // waiting; promote the first instead of pretending this is a fresh
+        // install.
+        if (slotsVerdict({ identity: storedCircles[0], meta: readGenMeta(storedCircles[0]) }).kind === "v1") {
+          showV1Notice();
+        } else {
+          const res = await leaveActive(kv, lockCtx(), { circles: storedCircles, toIndex: 0 });
+          state.circles = res.circles;
+          applyActive(res.active);
+          await enterCircle();
+        }
+      } else {
+        // No circle in any slot. A staged generation from a create that never
+        // reached its chain-key write belongs to nothing, and it is key
+        // material, so it does not get to sit here.
+        await writeRecordAtRest(kv, null, STAGED_SLOT, null);
+        // An empty device with a reason. The mark is left where it is: nothing
+        // has taken the slots yet, so this is still the true thing to say, and
+        // spending it on a screen rather than on a circle is what turned the
+        // next launch into an abandoned install twice running.
+        if (found.kind === "destroyed") showDestroyedNotice();
+        else showScreen("onboarding");
+      }
+    } catch (e) {
+      window.__starlingErrors.push(`enter: ${String(e)}`);
+      showScreen("onboarding");
+    }
+
+    // Demo and invite auto-actions only apply past the lock screen.
+    if (!state.locked) {
+      if (params.get("demo") === "1") startDemo();
+      else if (invite) promptJoin(invite);
+    }
+  }
+
+  await restoreCheckinTimer();
+
+  render();
+
+  if (persistenceBroken()) {
+    ui.toast("This browser is blocking storage. Starling runs, but nothing is saved after you close it.", "warn");
+  }
+
+  if (params.get("sheet") === "full" && sheet) sheet.snapTo("full", false);
+
+  setInterval(() => {
+    if (state.screen === "map" && !state.demo) render();
+  }, 5000);
+
+  // The wrappers serve assets locally already and neither WebView nor a
+  // custom WKWebView scheme wires up service worker interception, so
+  // registration is web-only.
+  if (!insecureContext && !isBundled() && "serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js").catch((e) => {
+      window.__starlingErrors.push(`sw: ${String(e)}`);
+    });
+    // The cache-first shell means a returning visitor's first load after a
+    // deploy runs the previous build; reload once when the fresh worker takes
+    // over so security-motivated changes apply within seconds, not visits.
+    // Guarded on an existing controller so a first-ever install never loops.
+    if (navigator.serviceWorker.controller) {
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (reloaded) return;
+        reloaded = true;
+        location.reload();
+      });
+    }
+  }
+}
+
+boot().catch((e) => {
+  window.__starlingErrors.push(`boot: ${String(e)}`);
+  // Last resort: never leave a blank page.
+  try {
+    state.screen = "onboarding";
+    $("#screen-onboarding").hidden = false;
+    $("#screen-map").hidden = true;
+    ui.toast("Starling hit a problem while starting.", "warn");
+  } catch {
+    // the error above is already recorded
+  }
+});

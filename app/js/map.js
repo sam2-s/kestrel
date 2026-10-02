@@ -1,0 +1,346 @@
+// Leaflet wrapper. Leaflet is loaded as a classic script; this module only
+// ever touches globalThis.L. All marker DOM is built with createElement and
+// textContent, never markup strings: member names are not trusted.
+
+// One tile source: OpenStreetMap. Dark mode is a CSS filter on the tile pane
+// only, so data colors (markers, trails, rings) stay untouched.
+const TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+
+const ATTRIB = '<a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+
+const RING_RADII = [250, 500, 1000, 2000];
+const MOVE_MS = 400;
+const easeOut = (t) => 1 - (1 - t) ** 3;
+
+// Warm DNS/TCP/TLS to the tile host, but only once a street basemap is actually
+// chosen. Off-grid and the demo pick no basemap and so still contact nothing.
+let tileHostWarmed = false;
+function warmTileHost() {
+  if (tileHostWarmed) return;
+  tileHostWarmed = true;
+  for (const rel of ["preconnect", "dns-prefetch"]) {
+    const link = document.createElement("link");
+    link.rel = rel;
+    link.href = "https://tile.openstreetmap.org";
+    document.head.appendChild(link);
+  }
+}
+
+export function createMapView(container, { onMarkerTap } = {}) {
+  const L = globalThis.L;
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)");
+
+  const map = L.map(container, {
+    zoomControl: false,
+    attributionControl: false,
+    minZoom: 3,
+    maxZoom: 19,
+    worldCopyJump: true,
+  });
+  const attribution = L.control.attribution({ position: "bottomleft", prefix: false });
+  attribution.addTo(map);
+  map.setView([20, 0], 3);
+
+  let tiles = null;
+  let rings = [];
+  let ringCenter = null;
+  let basemap = "dark";
+
+  const markers = new Map(); // id -> {marker, parts, cur, from, to, t0}
+  const trails = new Map(); // id -> [polylines]
+  let placeLayers = []; // circles + labels for the device's own saved places
+  let ticking = false;
+
+  function drawRings() {
+    for (const r of rings) r.remove();
+    rings = [];
+    if (basemap !== "none" || !ringCenter) return;
+    for (const radius of RING_RADII) {
+      rings.push(
+        L.circle(ringCenter, {
+          radius,
+          className: "offgrid-ring",
+          fill: false,
+          weight: 1,
+          interactive: false,
+        }).addTo(map),
+      );
+    }
+  }
+
+  function setBasemap(kind) {
+    basemap = kind;
+    if (tiles) {
+      tiles.remove();
+      tiles = null;
+    }
+    container.classList.toggle("offgrid", kind === "none");
+    container.classList.toggle("tiles-dark", kind === "dark");
+    if (kind === "dark" || kind === "light") {
+      warmTileHost();
+      tiles = L.tileLayer(TILE_URL, {
+        maxZoom: 19,
+        attribution: ATTRIB,
+        // The app itself is no-referrer everywhere. OSM's tile policy requires
+        // a Referer, so tile images alone send the bare origin, nothing more.
+        referrerPolicy: "origin",
+      }).addTo(map);
+    }
+    drawRings();
+  }
+
+  function setRingCenter(lat, lon) {
+    if (ringCenter && map.distance(ringCenter, [lat, lon]) < 25) return;
+    ringCenter = [lat, lon];
+    drawRings();
+  }
+
+  function buildMarkerEl() {
+    const root = document.createElement("div");
+    root.className = "mk";
+    const halo = document.createElement("div");
+    halo.className = "mk-halo";
+    const ava = document.createElement("div");
+    ava.className = "mk-ava";
+    const emoji = document.createElement("span");
+    ava.appendChild(emoji);
+    const name = document.createElement("div");
+    name.className = "mk-name";
+    root.append(halo, ava, name);
+    return { root, emoji, name };
+  }
+
+  function tick(now) {
+    let active = false;
+    for (const m of markers.values()) {
+      if (!m.to) continue;
+      const t = Math.min(1, (now - m.t0) / MOVE_MS);
+      const k = easeOut(t);
+      const lat = m.from[0] + (m.to[0] - m.from[0]) * k;
+      const lon = m.from[1] + (m.to[1] - m.from[1]) * k;
+      m.cur = [lat, lon];
+      m.marker.setLatLng(m.cur);
+      if (t >= 1) m.to = null;
+      else active = true;
+    }
+    if (active) requestAnimationFrame(tick);
+    else ticking = false;
+  }
+
+  function moveMarker(m, lat, lon) {
+    const dest = [lat, lon];
+    if (reduced.matches || !m.cur || map.distance(m.cur, dest) < 0.5) {
+      m.cur = dest;
+      m.to = null;
+      m.marker.setLatLng(dest);
+      return;
+    }
+    m.from = m.cur;
+    m.to = dest;
+    m.t0 = performance.now();
+    if (!ticking) {
+      ticking = true;
+      requestAnimationFrame(tick);
+    }
+  }
+
+  // One-shot animation class on a marker root, removed when its own
+  // animation ends so it can replay next time. Keyed by animation name
+  // because the halo and SOS loops never end and must not clear it.
+  function flashClass(m, cls, animName) {
+    const root = m.parts.root;
+    if (typeof root.classList?.add !== "function") return;
+    root.classList.remove(cls);
+    root.classList.add(cls);
+    // animationcancel too: a reduced-motion flip mid-flight cancels the
+    // animation without ever ending it, and the class must not outlive
+    // either exit.
+    const done = (e) => {
+      if (e?.animationName && e.animationName !== animName) return;
+      root.classList.remove(cls);
+      root.removeEventListener?.("animationend", done);
+      root.removeEventListener?.("animationcancel", done);
+    };
+    root.addEventListener?.("animationend", done);
+    root.addEventListener?.("animationcancel", done);
+  }
+
+  // data: {lat, lon, name, emoji, hue, status, self, sharing, ts, now}
+  function upsert(id, data) {
+    let m = markers.get(id);
+    let born = false;
+    if (!m) {
+      const parts = buildMarkerEl();
+      const icon = L.divIcon({ className: "mk-wrap", html: parts.root, iconSize: [0, 0] });
+      const marker = L.marker([data.lat, data.lon], { icon, keyboard: false });
+      marker.on("click", () => onMarkerTap?.(id));
+      marker.addTo(map);
+      m = { marker, parts, cur: [data.lat, data.lon], to: null, lastTs: 0 };
+      markers.set(id, m);
+      born = true;
+    }
+    const { root, emoji, name } = m.parts;
+    emoji.textContent = data.emoji || "";
+    name.textContent = data.name || "";
+    root.style.setProperty("--m-hue", String(data.hue ?? 0));
+    root.classList.toggle("mk-self", !!data.self);
+    root.classList.toggle("mk-sharing", !!data.self && !!data.sharing);
+    root.classList.toggle("mk-sos", data.status === "sos");
+    root.classList.toggle("mk-stale", data.status === "stale" || data.status === "stopped");
+    // Information age you can see: 0 fresh, 1 at the stale line. The
+    // discrete mk-stale class stays the truth the tests hold; this only
+    // shades the road between.
+    if (Number.isFinite(data.ts) && Number.isFinite(data.now)) {
+      const age = Math.min(1, Math.max(0, (data.now - data.ts) / (data.staleMs || 3 * 60 * 1000)));
+      root.style.setProperty("--age", age.toFixed(2));
+    }
+    if (!reduced.matches) {
+      if (born) flashClass(m, "mk-drop", "mk-drop-in");
+      else if (Number.isFinite(data.ts) && data.ts > m.lastTs && m.lastTs > 0) {
+        flashClass(m, "mk-ping", "mk-ping-ring");
+      }
+    }
+    if (Number.isFinite(data.ts)) m.lastTs = Math.max(m.lastTs, data.ts);
+    m.marker.setZIndexOffset(data.status === "sos" ? 900 : data.self ? 500 : 0);
+    moveMarker(m, data.lat, data.lon);
+    if (data.self) setRingCenter(data.lat, data.lon);
+  }
+
+  // The felt reward for a deliberate act (a check-in): the marker blooms
+  // once. A no-op under reduced motion.
+  function pulse(id) {
+    const m = markers.get(id);
+    if (m && !reduced.matches) flashClass(m, "mk-bloom", "mk-bloom-pop");
+  }
+
+  function removeMarker(id) {
+    const m = markers.get(id);
+    if (!m) return;
+    m.marker.remove();
+    markers.delete(id);
+    clearTrail(id);
+  }
+
+  function clearTrail(id) {
+    for (const line of trails.get(id) || []) line.remove();
+    trails.delete(id);
+  }
+
+  // Fading trail: three opacity tiers, oldest faintest.
+  function setTrail(id, points, hue) {
+    clearTrail(id);
+    if (!points || points.length < 2) return;
+    const color = `hsl(${hue ?? 0} 70% 55%)`;
+    const third = Math.max(2, Math.ceil(points.length / 3));
+    const tiers = [
+      { pts: points.slice(0, third + 1), op: 0.14 },
+      { pts: points.slice(third, third * 2 + 1), op: 0.28 },
+      { pts: points.slice(third * 2), op: 0.5 },
+    ];
+    const lines = [];
+    for (const tier of tiers) {
+      if (tier.pts.length < 2) continue;
+      lines.push(
+        L.polyline(
+          tier.pts.map((p) => [p.lat, p.lon]),
+          { color, weight: 3, opacity: tier.op, interactive: false, lineJoin: "round" },
+        ).addTo(map),
+      );
+    }
+    trails.set(id, lines);
+  }
+
+  // One-shot pick mode: the next map tap answers with its coordinates. Used
+  // by "pick a spot on the map" when saving a place.
+  let pickCb = null;
+  map.on("click", (ev) => {
+    if (!pickCb) return;
+    const cb = pickCb;
+    pickCb = null;
+    container.classList.remove("picking");
+    cb({ lat: ev.latlng.lat, lon: ev.latlng.lng });
+  });
+  function startPick(cb) {
+    pickCb = cb;
+    container.classList.add("picking");
+  }
+  function cancelPick() {
+    pickCb = null;
+    container.classList.remove("picking");
+  }
+
+  // The device's own saved places, drawn as soft rings with a name tag. These
+  // exist only in local storage; drawing them is the only thing done with them.
+  function setPlaces(places) {
+    for (const layer of placeLayers) layer.remove();
+    placeLayers = [];
+    for (const p of places || []) {
+      placeLayers.push(
+        L.circle([p.lat, p.lon], {
+          radius: p.radius,
+          className: "place-ring",
+          weight: 1.5,
+          interactive: false,
+        }).addTo(map),
+      );
+      const tag = document.createElement("div");
+      tag.className = "place-tag";
+      tag.textContent = p.name;
+      // The tag rides the ring's north edge, not its center, so it never sits
+      // on top of whoever is standing at the place. 1 degree of latitude is
+      // ~111320 m everywhere.
+      placeLayers.push(
+        L.marker([p.lat + p.radius / 111320, p.lon], {
+          icon: L.divIcon({ className: "place-tag-wrap", html: tag, iconSize: [0, 0] }),
+          keyboard: false,
+          interactive: false,
+        }).addTo(map),
+      );
+    }
+  }
+
+  // Fly so the target sits above the bottom sheet, not centered under it.
+  function focusOn(lat, lon, zoom = 16, yOffset = 110) {
+    const z = Math.max(map.getZoom(), zoom);
+    const p = map.project([lat, lon], z);
+    p.y += yOffset;
+    const c = map.unproject(p, z);
+    map.flyTo(c, z, { duration: reduced.matches ? 0 : 0.7 });
+  }
+
+  function fitAll(positions) {
+    if (!positions.length) return;
+    const bounds = L.latLngBounds(positions.map((p) => [p.lat, p.lon]));
+    map.fitBounds(bounds, {
+      paddingTopLeft: [48, 120],
+      paddingBottomRight: [48, 280],
+      maxZoom: 16,
+      animate: false,
+    });
+  }
+
+  return {
+    map,
+    setBasemap,
+    upsert,
+    pulse,
+    removeMarker,
+    markerIds: () => [...markers.keys()],
+    clearAll: () => {
+      for (const id of [...markers.keys()]) removeMarker(id);
+      for (const id of [...trails.keys()]) clearTrail(id);
+      for (const r of rings) r.remove();
+      rings = [];
+      ringCenter = null;
+      setPlaces([]);
+    },
+    setPlaces,
+    startPick,
+    cancelPick,
+    setTrail,
+    clearTrail,
+    focusOn,
+    fitAll,
+    invalidate: () => map.invalidateSize(),
+  };
+}

@@ -1,0 +1,13 @@
+New switch in Settings, under Sharing: keep sharing when the app is closed. Off
+by default. With it on, swiping Starling out of recents no longer stops a share.
+Nothing about the encryption changed, and no position or key is handed to the
+wrapper; the page that does the encrypting is simply kept running until the
+share ends.
+
+It costs something, and the setting says so: a phone you believe you closed is
+still running Starling and still holding your circle's keys, which the app lock
+cannot protect until the share ends. When the share does end, the page goes with
+it a few seconds later.
+
+A timed share now ends on the next position rather than on a countdown the
+system is free to delay, so a closed app cannot overrun the window you set.

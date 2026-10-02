@@ -1,0 +1,1 @@
+Invites now work on a relay you host yourself. The link carries the relay's address, so a new phone joins through it, and the first screen lets you pick a relay before you make a circle.

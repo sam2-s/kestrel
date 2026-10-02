@@ -1,0 +1,222 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync, statSync, existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const APP = path.join(ROOT, "app");
+
+function diskPath(urlPath) {
+  const p = urlPath === "/" ? "/index.html" : urlPath;
+  return path.join(APP, p.replace(/^\//, ""));
+}
+
+function sizeOf(file) {
+  return statSync(file).size;
+}
+
+const manifestPath = path.join(APP, "manifest.webmanifest");
+const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+
+test("manifest has the required fields", () => {
+  assert.equal(manifest.name, "Starling");
+  assert.equal(manifest.short_name, "Starling");
+  assert.equal(
+    manifest.description,
+    "Starling's landing page and live demo. Location sharing itself lives in the Starling Android app."
+  );
+  assert.equal(manifest.start_url, "/");
+  assert.equal(manifest.scope, "/");
+  // "standalone" is what makes Add to Home Screen open without Safari/Chrome
+  // chrome; iOS falls back to "browser" gracefully on versions that ignore
+  // the manifest, since index.html carries the same setting via
+  // apple-mobile-web-app-capable for those.
+  assert.equal(manifest.display, "standalone");
+  assert.equal(manifest.orientation, "portrait");
+  assert.equal(manifest.background_color, "#0a0d14");
+  assert.equal(manifest.theme_color, "#0a0d14");
+});
+
+test("manifest icon set covers 192, 512, maskable 512 and the svg", () => {
+  assert.ok(Array.isArray(manifest.icons) && manifest.icons.length >= 4);
+  const bySrc = new Map(manifest.icons.map((i) => [i.src, i]));
+  const png192 = bySrc.get("/icons/icon-192.png");
+  assert.ok(png192, "192 icon listed");
+  assert.equal(png192.sizes, "192x192");
+  assert.equal(png192.type, "image/png");
+  const png512 = bySrc.get("/icons/icon-512.png");
+  assert.ok(png512, "512 icon listed");
+  assert.equal(png512.sizes, "512x512");
+  assert.equal(png512.type, "image/png");
+  const maskable = bySrc.get("/icons/icon-maskable-512.png");
+  assert.ok(maskable, "maskable icon listed");
+  assert.equal(maskable.sizes, "512x512");
+  assert.equal(maskable.type, "image/png");
+  assert.equal(maskable.purpose, "maskable");
+  const svg = bySrc.get("/icons/starling.svg");
+  assert.ok(svg, "svg icon listed");
+  assert.equal(svg.sizes, "any");
+  assert.equal(svg.type, "image/svg+xml");
+  assert.equal(svg.purpose, "any");
+});
+
+test("every icon file the manifest references exists with nonzero size", () => {
+  for (const icon of manifest.icons) {
+    const file = diskPath(icon.src);
+    assert.ok(existsSync(file), `${icon.src} missing on disk`);
+    assert.ok(sizeOf(file) > 0, `${icon.src} is empty`);
+  }
+});
+
+const swText = readFileSync(path.join(APP, "sw.js"), "utf8");
+
+// The frozen app shell contract shared with the UI build.
+const PRECACHE = [
+  "/",
+  "/index.html",
+  "/css/tokens.css",
+  "/css/app.css",
+  "/js/main.js",
+  "/js/ui.js",
+  "/js/map.js",
+  "/js/net.js",
+  "/js/store.js",
+  "/js/geo.js",
+  "/js/fmt.js",
+  "/js/checkin.js",
+  "/js/demo.js",
+  "/js/wire.js",
+  "/js/crypto.js",
+  "/js/qr.js",
+  "/js/argon2.js",
+  "/js/argon2.wasm",
+  "/js/strings-es.js",
+  "/js/strings-de.js",
+  "/js/strings-fr.js",
+  "/js/strings-pt.js",
+  "/js/qrscan.js",
+  "/vendor/leaflet/leaflet.js",
+  "/vendor/leaflet/leaflet.css",
+  "/icons/starling.svg",
+  "/icons/favicon.svg",
+  "/icons/icon-192.png",
+  "/icons/icon-512.png",
+  "/manifest.webmanifest"
+];
+
+// Files that must already exist: this agent's own output plus the frozen
+// vendor, js, css and icon files. The rest belongs to the UI agent and may
+// land later; those get a skip, not a failure, while absent.
+const MUST_EXIST = new Set([
+  "/css/tokens.css",
+  "/js/wire.js",
+  "/js/crypto.js",
+  "/js/qr.js",
+  "/js/qrscan.js",
+  "/vendor/leaflet/leaflet.js",
+  "/vendor/leaflet/leaflet.css",
+  "/icons/starling.svg",
+  "/icons/favicon.svg",
+  "/icons/icon-192.png",
+  "/icons/icon-512.png",
+  "/manifest.webmanifest"
+]);
+
+test("sw.js precaches the exact app shell list", () => {
+  for (const p of PRECACHE) {
+    assert.ok(swText.includes(`"${p}"`), `precache list missing "${p}"`);
+  }
+});
+
+test("sw.js never caches /api/ and passes non-GET through", () => {
+  assert.match(swText, /startsWith\("\/api\/"\)/);
+  assert.match(swText, /req\.method !== "GET"/);
+});
+
+for (const p of PRECACHE) {
+  const file = diskPath(p);
+  const label = `precache path ${p} exists on disk`;
+  if (MUST_EXIST.has(p)) {
+    test(label, () => {
+      assert.ok(existsSync(file), `${p} missing at ${file}`);
+      assert.ok(sizeOf(file) > 0, `${p} is empty`);
+    });
+  } else {
+    test(label, (t) => {
+      if (!existsSync(file)) {
+        t.skip(`${p} not present yet (UI build in flight)`);
+        return;
+      }
+      assert.ok(sizeOf(file) > 0, `${p} is empty`);
+    });
+  }
+}
+
+test("every module the app statically imports is in the precache", () => {
+  // The existing checks above assert that a frozen, hand-written list appears
+  // in sw.js. That direction cannot catch a NEW module: joinflow.js was added
+  // to main.js's import graph and left out of PRECACHE, and every test here
+  // stayed green while the hosted app stopped booting offline. cache.addAll
+  // still succeeds because nothing ever requests the missing file, so install
+  // does not fail loudly either.
+  //
+  // So walk the real graph instead of a list somebody has to remember to edit.
+  const root = new URL("../app/js/", import.meta.url);
+  const seen = new Set();
+  const queue = ["main.js"];
+  while (queue.length) {
+    const name = queue.shift();
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const src = readFileSync(new URL(name, root), "utf8");
+    for (const m of src.matchAll(/from "\.\/([\w.-]+\.js)"/g)) queue.push(m[1]);
+  }
+
+  const sw = readFileSync(new URL("../app/sw.js", import.meta.url), "utf8");
+  const missing = [...seen].filter((n) => !sw.includes(`"/js/${n}"`));
+  assert.deepEqual(missing, [], `these are imported but never precached: ${missing.join(", ")}`);
+  assert.ok(seen.size > 10, "the walk actually followed the graph rather than finding nothing");
+});
+
+// Runs the real worker against stub caches and fetch, and returns what it
+// answers a navigation with: "cache", "network", or null when it lets the
+// browser handle the request itself.
+async function answerNavigation(pathname, { online = true } = {}) {
+  const { runInNewContext } = await import("node:vm");
+  const handlers = {};
+  const SHELL = { from: "cache" };
+  const sandbox = {
+    URL,
+    console,
+    self: {
+      location: { origin: "https://starlingmap.app" },
+      addEventListener: (type, fn) => { handlers[type] = fn; },
+      skipWaiting() {},
+      clients: { claim() {} },
+    },
+    caches: { match: async (key) => (key === "/index.html" ? SHELL : undefined) },
+    fetch: async () => {
+      if (!online) throw new TypeError("offline");
+      return { from: "network" };
+    },
+  };
+  runInNewContext(swText, sandbox);
+  let answer = null;
+  handlers.fetch({
+    request: { method: "GET", mode: "navigate", url: `https://starlingmap.app${pathname}` },
+    respondWith: (p) => { answer = p; },
+  });
+  return answer ? (await answer).from : null;
+}
+
+test("the worker answers only the app shell from cache, not other pages", async () => {
+  assert.equal(await answerNavigation("/"), "cache");
+  assert.equal(await answerNavigation("/index.html"), "cache");
+  assert.equal(await answerNavigation("/?demo=1"), "cache");
+  assert.equal(await answerNavigation("/privacy"), "network");
+  assert.equal(await answerNavigation("/privacy.html"), "network");
+  assert.equal(await answerNavigation("/starling.apk"), "network");
+  assert.equal(await answerNavigation("/help"), null);
+  assert.equal(await answerNavigation("/privacy", { online: false }), "cache");
+});

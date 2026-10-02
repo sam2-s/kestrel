@@ -1,0 +1,1 @@
+Settings now says who made Starling, with links to the author and the source code. The store listing describes invites and key rotation as they work today, and links to the author's page.
