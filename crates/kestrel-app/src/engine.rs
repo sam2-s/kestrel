@@ -169,7 +169,7 @@ impl Engine {
     ///
     /// Returns whether anything was queued. A false here is the common case and is not a
     /// problem: it means the person has not moved.
-    pub fn offer_position(&self, circle: &Arc<std::sync::Mutex<Circle>>) -> bool {
+    pub fn offer_position(&self) -> bool {
         let Some(fix) = self.shared.newest_fix() else {
             return false;
         };
@@ -184,15 +184,26 @@ impl Engine {
         // The baseline is the last fix that was *queued*, not the newest one to arrive.
         // Using the newest would mean the very first offer compares a fix with itself,
         // finds no movement, and decides there is nothing to send.
-        let last =
-            self.last_queued.lock().ok().and_then(|slot| slot.filter(|f| f.ts != fix.ts));
+        let last = self.last_queued.lock().ok().and_then(|slot| *slot);
 
-        let Ok(mut circle) = circle.lock() else {
+        // The same fix again is not a new position, whether or not the last one went out.
+        // `worth_posting` treats a missing baseline as "first position, always send", so
+        // without this an offer made after a successful send would put the same
+        // coordinate on the wire a second time — once per poll, for as long as the share
+        // ran.
+        if last.is_some_and(|l| l.ts == fix.ts) {
             return false;
-        };
-        let Some(post) =
-            logic::build_post(&mut circle, &fix, &permissions, &name, last.as_ref())
-        else {
+        }
+
+        // Built under the circle's lock, via Shared, so no key material is ever copied
+        // out of it.
+        let post = self
+            .shared
+            .with_circle(|circle| {
+                logic::build_post(circle, &fix, &permissions, &name, last.as_ref())
+            })
+            .flatten();
+        let Some(post) = post else {
             return false;
         };
         if let Ok(mut slot) = self.last_queued.lock() {
@@ -200,6 +211,14 @@ impl Engine {
         }
         self.push(post, "position", true);
         true
+    }
+
+    /// Fold a poll's events into the circle.
+    ///
+    /// `None` when there is no circle, which is the normal state on the welcome screen
+    /// and after a duress wipe.
+    fn ingest(&self, feed: &Feed, now: i64) -> usize {
+        self.shared.with_circle(|circle| circle.ingest_feed(feed, now).len()).unwrap_or(0)
     }
 
     fn permissions(&self) -> Permissions {
@@ -280,22 +299,14 @@ impl Engine {
     }
 
     /// Fetch what is new, and fold it into the circle.
-    pub async fn poll(
-        &self,
-        circle: &Arc<std::sync::Mutex<Circle>>,
-        now: i64,
-    ) -> Result<usize, String> {
+    pub async fn poll(&self, now: i64) -> Result<usize, String> {
         let channel = self.channel();
         if channel.is_empty() {
             return Err("no circle attached".to_string());
         }
         let since = self.cursor.lock().map(|c| *c).unwrap_or(0);
         let feed = self.sink.fetch(&channel, since).await?;
-        let Ok(mut circle) = circle.lock() else {
-            return Err("the circle is locked".to_string());
-        };
-        let events = circle.ingest_feed(&feed, now);
-        let count = events.len();
+        let count = self.ingest(&feed, now);
         // The cursor advances even when nothing was accepted: a post this build
         // rejects should not be re-fetched every fifteen seconds for the life of the app.
         // The relay's own clock, not a device-side one: a phone with a wrong clock
@@ -384,7 +395,7 @@ pub fn worth_telling(last_told_ms: i64, now_ms: i64) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{block_on, *};
     use std::sync::Mutex;
 
     /// A relay that records what it was sent and can be told to fail.
@@ -458,10 +469,41 @@ mod tests {
         }
     }
 
-    fn a_circle() -> Arc<Mutex<Circle>> {
+    /// A shared state holding one circle, which is what the engine reads through.
+    fn with_circle() -> (Arc<Shared>, String) {
+        let shared = Arc::new(Shared::default());
         let identity = kestrel_core::identity::Identity::generate();
         let seed = kestrel_core::seal::random_bytes::<32>();
-        Arc::new(Mutex::new(Circle::create(identity, &seed, 1_700_000_000_000)))
+        let circle = Circle::create(identity, &seed, 1_700_000_000_000);
+        let channel = circle.channel().to_string();
+        *shared.circles.lock().unwrap() = vec![circle];
+        (shared, channel)
+    }
+
+    /// A circle whose permissions allow posting, and whose user has asked to share.
+    ///
+    /// `sharing` is recorded in both places it is read from. That they must agree is the
+    /// sort of thing a test exists for; the helper sets both because forgetting one
+    /// produces a loop that runs but sends nothing, or a notification claiming a share
+    /// that is not running.
+    fn shareable() -> (Arc<Shared>, String) {
+        let (shared, channel) = with_circle();
+        let mut p = permitted();
+        p.set_sharing(true);
+        *shared.permissions.lock().unwrap() = p;
+        if let Ok(mut state) = shared.state.lock() {
+            state.sharing = true;
+        }
+        (shared, channel)
+    }
+
+    /// A post for `ts`, built from the circle in `shared`.
+    fn a_post(shared: &Shared, ts: i64) -> Option<Post> {
+        shared
+            .with_circle(|circle| {
+                logic::build_post(circle, &fix(ts), &permitted(), "Ada", None)
+            })
+            .flatten()
     }
 
     fn fix(ts: i64) -> Fix {
@@ -494,16 +536,11 @@ mod tests {
     #[test]
     fn a_post_goes_out_and_the_queue_empties() {
         let sink = Fake::new();
-        let engine = Engine::new(Arc::new(Shared::default()), sink.clone());
-        let circle = a_circle();
-        engine.attach(circle.lock().unwrap().channel());
-        let post = post_for(
-            &mut circle.lock().unwrap(),
-            &fix(1_700_000_001_000),
-            &permitted(),
-            "Ada",
-        )
-        .expect("a first position should produce a post");
+        let (shared, channel) = with_circle();
+        let engine = Engine::new(shared.clone(), sink.clone());
+        engine.attach(&channel);
+        let post = a_post(&shared, 1_700_000_001_000)
+            .expect("a first position should produce a post");
         engine.push(post, "position", true);
         assert_eq!(engine.queued(), 1);
         block_on(async {
@@ -514,7 +551,7 @@ mod tests {
         // And it went to the circle's own channel, not somewhere else.
         assert_eq!(
             sink.channels().first().map(|s| s.as_str()),
-            Some(circle.lock().unwrap().channel()),
+            Some(channel.as_str()),
             "the post went somewhere other than the circle's channel"
         );
     }
@@ -525,16 +562,10 @@ mod tests {
         // down is a hole in the circle's picture of someone.
         let sink = Fake::new();
         *sink.fail_send.lock().unwrap() = true;
-        let engine = Engine::new(Arc::new(Shared::default()), sink.clone());
-        let circle = a_circle();
-        engine.attach(circle.lock().unwrap().channel());
-        let post = post_for(
-            &mut circle.lock().unwrap(),
-            &fix(1_700_000_001_000),
-            &permitted(),
-            "Ada",
-        )
-        .unwrap();
+        let (shared, channel) = with_circle();
+        let engine = Engine::new(shared.clone(), sink.clone());
+        engine.attach(&channel);
+        let post = a_post(&shared, 1_700_000_001_000).unwrap();
         engine.push(post, "position", true);
         let result = block_on(async { engine.flush().await });
         assert!(result.is_err());
@@ -547,33 +578,31 @@ mod tests {
         // them is a coordinate the relay held.
         let sink = Fake::new();
         *sink.fail_send.lock().unwrap() = true;
-        let engine = Engine::new(Arc::new(Shared::default()), sink.clone());
-        let circle = a_circle();
-        engine.attach(circle.lock().unwrap().channel());
+        let (shared, channel) = with_circle();
+        let engine = Engine::new(shared.clone(), sink.clone());
+        engine.attach(&channel);
         for step in 0..40 {
-            let post = post_for(
-                &mut circle.lock().unwrap(),
-                &fix(1_700_000_001_000 + step * 15_000),
-                &permitted(),
-                "Ada",
-            )
-            .unwrap();
+            let post = a_post(&shared, 1_700_000_001_000 + step * 15_000).unwrap();
             engine.push(post, "position", true);
         }
         assert_eq!(engine.queued(), 1, "positions were not coalesced");
         // And a goodbye is not coalescible: its meaning cannot be carried by a later one.
-        let goodbye = kestrel_core::msg::CircleMsg::bye(
-            0,
-            kestrel_core::session::me(
-                circle.lock().unwrap().identity(),
-                "Ada",
-                "",
-                0.8,
-                ShareMode::Precise,
-            ),
-        );
-        let post = circle.lock().unwrap().seal(&goodbye, 1_700_000_002_000);
-        if let Some(post) = post {
+        let goodbye = shared
+            .with_circle(|circle| {
+                let msg = kestrel_core::msg::CircleMsg::bye(
+                    0,
+                    kestrel_core::session::me(
+                        circle.identity(),
+                        "Ada",
+                        "",
+                        0.8,
+                        ShareMode::Precise,
+                    ),
+                );
+                circle.seal(&msg, 1_700_000_002_000)
+            })
+            .flatten();
+        if let Some(post) = goodbye {
             engine.push(post, "goodbye", false);
         }
         assert_eq!(engine.queued(), 2);
@@ -584,17 +613,11 @@ mod tests {
         // A flag left set after a failure would mean the second flush silently did
         // nothing, forever.
         let sink = Fake::new();
-        let engine = Engine::new(Arc::new(Shared::default()), sink.clone());
-        let circle = a_circle();
-        engine.attach(circle.lock().unwrap().channel());
+        let (shared, channel) = with_circle();
+        let engine = Engine::new(shared.clone(), sink.clone());
+        engine.attach(&channel);
         *sink.fail_send.lock().unwrap() = true;
-        let post = post_for(
-            &mut circle.lock().unwrap(),
-            &fix(1_700_000_001_000),
-            &permitted(),
-            "Ada",
-        )
-        .unwrap();
+        let post = a_post(&shared, 1_700_000_001_000).unwrap();
         engine.push(post, "position", true);
         assert!(block_on(async { engine.flush().await }).is_err());
         *sink.fail_send.lock().unwrap() = false;
@@ -619,11 +642,10 @@ mod tests {
         let engine = Engine::new(Arc::new(Shared::default()), sink.clone());
         engine.attach("aaaaaaaa");
         block_on(async {
-            engine.poll(&a_circle(), 1_700_000_000_000).await.ok();
+            engine.poll(1_700_000_000_000).await.ok();
         });
         engine.attach("bbbbbbbb");
-        let circle = a_circle();
-        block_on(async { engine.poll(&circle, 1_700_000_000_000).await }).ok();
+        block_on(async { engine.poll(1_700_000_000_000).await }).ok();
         let asked = sink.channels();
         assert_eq!(asked.first().map(|s| s.as_str()), Some("aaaaaaaa"));
         assert_eq!(asked.last().map(|s| s.as_str()), Some("bbbbbbbb"));
@@ -634,15 +656,15 @@ mod tests {
         // A cursor that does not advance re-fetches the same window every fifteen seconds
         // for the life of the app.
         let sink = Fake::new();
-        let engine = Engine::new(Arc::new(Shared::default()), sink.clone());
-        let circle = a_circle();
-        engine.attach(circle.lock().unwrap().channel());
+        let (shared, channel) = with_circle();
+        let engine = Engine::new(shared, sink.clone());
+        engine.attach(&channel);
         sink.set_feed(kestrel_core::wire::Feed {
             now: 1_700_000_060_000,
             members: Vec::new(),
         });
         block_on(async {
-            engine.poll(&circle, 1_700_000_060_000).await.ok();
+            engine.poll(1_700_000_060_000).await.ok();
         });
         assert_eq!(engine.cursor.lock().unwrap().to_owned(), 1_700_000_060_000);
 
@@ -653,7 +675,7 @@ mod tests {
             members: Vec::new(),
         });
         block_on(async {
-            engine.poll(&circle, 1_700_000_060_000).await.ok();
+            engine.poll(1_700_000_060_000).await.ok();
         });
         assert_eq!(engine.cursor.lock().unwrap().to_owned(), 1_700_000_060_000);
     }
@@ -664,10 +686,10 @@ mod tests {
         // the posts that were missed while it was down are never fetched.
         let sink = Fake::new();
         *sink.fail_fetch.lock().unwrap() = true;
-        let engine = Engine::new(Arc::new(Shared::default()), sink.clone());
-        let circle = a_circle();
-        engine.attach(circle.lock().unwrap().channel());
-        assert!(block_on(async { engine.poll(&circle, 1).await }).is_err());
+        let (shared, channel) = with_circle();
+        let engine = Engine::new(shared, sink.clone());
+        engine.attach(&channel);
+        assert!(block_on(async { engine.poll(1).await }).is_err());
         assert_eq!(engine.cursor.lock().unwrap().to_owned(), 0);
     }
 
@@ -676,15 +698,10 @@ mod tests {
         // A duress wipe with a queue full of positions would post them on the next
         // launch, from a key the user believes is gone.
         let sink = Fake::new();
-        let engine = Engine::new(Arc::new(Shared::default()), sink.clone());
-        let circle = a_circle();
-        let post = post_for(
-            &mut circle.lock().unwrap(),
-            &fix(1_700_000_001_000),
-            &permitted(),
-            "Ada",
-        )
-        .unwrap();
+        let (shared, channel) = with_circle();
+        let engine = Engine::new(shared.clone(), sink.clone());
+        engine.attach(&channel);
+        let post = a_post(&shared, 1_700_000_001_000).unwrap();
         engine.push(post, "position", true);
         assert_eq!(engine.queued(), 1);
         engine.clear();
@@ -755,37 +772,303 @@ mod tests {
 
     #[test]
     fn an_unusable_fix_produces_no_post() {
-        let circle = a_circle();
-        let mut guard = circle.lock().unwrap();
+        let (shared, _channel) = with_circle();
         // A timestamp inside the circle's own epoch: the ratchet refuses a post from
         // before it was created, which is correct and is checked elsewhere.
         let now = 1_700_000_001_000;
-        assert!(
-            post_for(&mut guard, &fix(now), &permitted(), "Ada").is_some(),
-            "a usable position should produce a post"
-        );
+        assert!(a_post(&shared, now).is_some(), "a usable position should produce a post");
         let zero = Fix { lat: 0.0, lon: 0.0, acc: 0.0, ts: now + 1000, battery: 0.0 };
+        let refused = shared
+            .with_circle(|circle| {
+                logic::build_post(circle, &zero, &permitted(), "Ada", None)
+            })
+            .flatten();
         // The core refuses a null-island position outright, so nothing is queued rather
         // than a marker appearing in the Gulf of Guinea.
-        assert!(post_for(&mut guard, &zero, &permitted(), "Ada").is_none());
+        assert!(refused.is_none());
     }
 
-    /// Runs a future to completion without a runtime.
-    ///
-    /// A test-only executor rather than tokio: the engine's own tests should not need an
-    /// async runtime to check that a queue drains.
-    fn block_on<F: std::future::Future>(mut future: F) -> F::Output {
-        use std::task::{Context, Poll, Waker};
-        let waker = Waker::noop();
-        let mut cx = Context::from_waker(waker);
-        // SAFETY: nothing is shared across threads here; the future is polled to
-        // completion on this one and then dropped.
-        let mut future = unsafe { std::pin::Pin::new_unchecked(&mut future) };
-        loop {
-            match future.as_mut().poll(&mut cx) {
-                Poll::Ready(value) => return value,
-                Poll::Pending => std::thread::yield_now(),
-            }
+    #[test]
+    fn the_share_loop_posts_a_fix_and_folds_the_feed() {
+        let sink = Fake::new();
+        let (shared, channel) = shareable();
+        let engine = Arc::new(Engine::new(shared.clone(), sink.clone()));
+        engine.attach(&channel);
+        let mut loop_ = ShareLoop::new(engine, shared.clone());
+
+        // A first tick with nothing to do: a person has not moved, so there is nothing
+        // to send, and the feed is worth one fetch.
+        let tick = loop_.tick(1_700_000_001_000);
+        assert_eq!(tick.posted, 0, "nothing to send yet");
+        assert!(!tick.offline);
+        assert!(tick.sending, "sharing was on and permitted");
+
+        // Now a fix. The loop offers it, flushes it, and the relay is told.
+        shared.record_fix(fix(1_700_000_001_500));
+        let tick = loop_.tick(1_700_000_001_500);
+        assert_eq!(tick.posted, 1, "the fix was not sent");
+        assert_eq!(sink.sent().len(), 1);
+
+        // And a poll on the same pass. The cursor now exists, so the cursor-only tests
+        // above describe the general case.
+        assert_eq!(tick.polled, 0, "the feed was empty");
+    }
+
+    #[test]
+    fn the_share_loop_does_not_poll_an_empty_feed_every_pass() {
+        // An empty feed is worth one fetch a minute, not one fetch a second: four tests
+        // a minute of "nobody has moved" is four minutes of electricity.
+        let sink = Fake::new();
+        let (shared, channel) = shareable();
+        let engine = Arc::new(Engine::new(shared.clone(), sink.clone()));
+        engine.attach(&channel);
+        let mut loop_ = ShareLoop::new(engine, shared.clone());
+
+        let first = loop_.tick(1_700_000_001_000);
+        assert_eq!(first.polled, 0);
+        let second = loop_.tick(1_700_000_001_500);
+        assert_eq!(second.polled, 0);
+        // The second tick did not even ask: the fetch count on the fake is one, not two.
+        // The fake records the channel in `channels` on every fetch.
+        assert_eq!(sink.channels().len(), 1, "fetched again within the empty-feed window");
+    }
+
+    #[test]
+    fn the_share_loop_is_quiet_when_sharing_is_off() {
+        let sink = Fake::new();
+        let (shared, channel) = with_circle(); // permissions default: not sharing
+        let engine = Arc::new(Engine::new(shared.clone(), sink.clone()));
+        engine.attach(&channel);
+        let mut loop_ = ShareLoop::new(engine, shared.clone());
+        shared.record_fix(fix(1_700_000_001_000));
+        let tick = loop_.tick(1_700_000_001_000);
+        assert!(!tick.sending);
+        assert_eq!(tick.posted, 0);
+        assert_eq!(tick.polled, 0, "no poll while nobody is sharing");
+        assert!(sink.channels().is_empty());
+    }
+
+    #[test]
+    fn the_share_loop_stays_alive_when_the_relay_is_down() {
+        // The ordinary case: the phone is in a lift. Nothing panics, nothing blocks on a
+        // timeout beyond the HTTP client's, and the next pass tries again.
+        let sink = Fake::new();
+        *sink.fail_send.lock().unwrap() = true;
+        *sink.fail_fetch.lock().unwrap() = true;
+        let (shared, channel) = shareable();
+        let engine = Arc::new(Engine::new(shared.clone(), sink.clone()));
+        engine.attach(&channel);
+        let mut loop_ = ShareLoop::new(engine.clone(), shared.clone());
+        shared.record_fix(fix(1_700_000_001_000));
+        let tick = loop_.tick(1_700_000_001_000);
+        assert!(tick.offline);
+        assert_eq!(tick.posted, 0);
+        assert_eq!(engine.queued(), 1, "the post was dropped rather than queued");
+
+        // And it comes back.
+        *sink.fail_send.lock().unwrap() = false;
+        *sink.fail_fetch.lock().unwrap() = false;
+        let tick = loop_.tick(1_700_000_061_000);
+        assert!(!tick.offline);
+        assert_eq!(tick.posted, 1);
+        assert_eq!(engine.queued(), 0);
+    }
+
+    #[test]
+    fn the_share_loop_interval_is_a_sane_cadence() {
+        // Fast enough that a person who starts moving posts within the patience people
+        // have for a map; slow enough that the loop is not a battery drain.
+        let interval = ShareLoop::interval();
+        assert!(interval.as_millis() >= 100, "polling more than ten times a second");
+        assert!(interval.as_millis() <= 2_000, "a position could wait two seconds to post");
+    }
+
+    #[test]
+    fn a_position_is_queued_and_sent_by_the_loop() {
+        // The whole path end to end, minus the network: a fix arrives, the engine notices,
+        // and the relay is told. This is the test that would have caught a share running,
+        // showing a notification, and posting nothing.
+        let sink = Fake::new();
+        let (shared, channel) = shareable();
+        let engine = Engine::new(shared.clone(), sink.clone());
+        engine.attach(&channel);
+
+        assert!(!engine.offer_position(), "no fix yet, so nothing to send");
+        assert!(
+            !shared.record_fix(Fix { lat: 0.0, lon: 0.0, acc: 0.0, ts: 1, battery: 0.0 }),
+            "a null-island fix should be refused outright"
+        );
+        assert!(shared.record_fix(fix(1_700_000_001_000)));
+        assert!(engine.offer_position(), "the first position should be queued");
+        block_on(async { engine.flush().await }).expect("the sink accepts it");
+        assert_eq!(sink.sent().len(), 1);
+        assert!(engine.queued() == 0);
+
+        // A second offer at the same fix sends nothing: it is the same place.
+        assert!(!engine.offer_position(), "the same fix was queued twice");
+    }
+
+    #[test]
+    fn moving_queues_another_position_and_standing_still_does_not() {
+        let sink = Fake::new();
+        let (shared, channel) = shareable();
+        let engine = Engine::new(shared.clone(), sink.clone());
+        engine.attach(&channel);
+        shared.record_fix(fix(1_700_000_001_000));
+        assert!(engine.offer_position());
+        // Flushed between each step: an unflushed position is coalesced away by the next
+        // one, which is the whole point of the queue and would otherwise mask the result.
+        block_on(async { engine.flush().await }).ok();
+
+        // Same place, fifteen seconds later: nothing.
+        shared.record_fix(fix(1_700_000_016_000));
+        assert!(!engine.offer_position(), "a stationary device queued again");
+        block_on(async { engine.flush().await }).ok();
+        assert_eq!(sink.sent().len(), 1, "a stationary device sent again");
+
+        // A kilometre away: something.
+        shared.record_fix(Fix {
+            lat: 44.989,
+            lon: -93.27,
+            acc: 5.0,
+            ts: 1_700_000_031_000,
+            battery: 0.8,
+        });
+        assert!(engine.offer_position(), "a kilometre of movement queued nothing");
+        block_on(async { engine.flush().await }).ok();
+        assert_eq!(sink.sent().len(), 2);
+    }
+
+    #[test]
+    fn a_share_without_permission_queues_nothing() {
+        // The engine is asked to post while the location permission is refused. It must
+        // queue nothing: a post that cannot be sent sitting in a queue is a claim the
+        // app cannot back up.
+        let sink = Fake::new();
+        let (shared, channel) = with_circle();
+        let engine = Engine::new(shared.clone(), sink.clone());
+        engine.attach(&channel);
+        shared.record_fix(fix(1_700_000_001_000));
+        assert!(!engine.offer_position());
+        assert_eq!(engine.queued(), 0);
+    }
+
+    #[test]
+    fn a_share_with_no_circle_queues_nothing() {
+        // First run: a fix arrives before a circle exists.
+        let sink = Fake::new();
+        let shared = Arc::new(Shared::default());
+        let engine = Engine::new(shared.clone(), sink.clone());
+        shared.record_fix(fix(1_700_000_001_000));
+        assert!(!engine.offer_position());
+        assert!(block_on(async { engine.flush().await }).is_err());
+    }
+}
+
+/// What one pass of the share loop did, as data.
+///
+/// Returned rather than logged, so a test can assert on it and so the caller can decide
+/// what is worth saying out loud. A successful pass that did nothing is the common case;
+/// it does not become a log line, because an hour of those is not an hour of news.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Tick {
+    /// How many posts went out.
+    pub posted: usize,
+    /// How many events a poll folded in.
+    pub polled: usize,
+    /// Whether the device was trying to post.
+    pub sending: bool,
+    /// The relay could not be reached this pass.
+    pub offline: bool,
+}
+
+/// Runs a future to completion without a runtime.
+///
+/// No async runtime of its own: the engine's futures are driven to completion on the
+/// calling thread, which for this app is the share loop thread. A `std::task::Waker`
+/// that never wakes is enough, because every future here is polled to readiness
+/// immediately — `Relay` responds, and the outbox either accepts the post or it does
+/// not, both of which settle without waiting.
+fn block_on<F: std::future::Future>(mut future: F) -> F::Output {
+    use std::task::{Context, Poll, Waker};
+    let waker = Waker::noop();
+    let mut cx = Context::from_waker(waker);
+    // A pinned future polled to completion on one thread and not shared is safe: there
+    // is no move once polling starts, and nothing here outlives the call.
+    let mut future = unsafe { std::pin::Pin::new_unchecked(&mut future) };
+    loop {
+        match future.as_mut().poll(&mut cx) {
+            Poll::Ready(value) => return value,
+            Poll::Pending => std::thread::yield_now(),
         }
+    }
+}
+
+/// The loop that keeps a share alive: queue the fix when it moves, flush the outbox,
+/// fold in what the circle said back.
+///
+/// Not a task. Kestrel does not carry a runtime of its own, so this is driven by a
+/// thread that sleeps between passes. The cadence is the decisions in
+/// [`logic::worth_posting`] and [`worth_polling`], not the sleep: a position posts when
+/// the person moves, not when the timer happens to fire.
+pub struct ShareLoop {
+    engine: Arc<Engine>,
+    shared: Arc<Shared>,
+    last_poll_ms: i64,
+    last_poll_was_empty: bool,
+}
+
+impl ShareLoop {
+    pub fn new(engine: Arc<Engine>, shared: Arc<Shared>) -> Self {
+        Self { engine, shared, last_poll_ms: 0, last_poll_was_empty: false }
+    }
+
+    /// One pass. Returns what happened rather than doing anything with it.
+    pub fn tick(&mut self, now: i64) -> Tick {
+        let mut tick = Tick::default();
+
+        let sharing = self.shared.state.lock().map(|s| s.sharing).unwrap_or(false);
+        let permissions = self.shared.permissions.lock().map(|p| *p).unwrap_or_default();
+
+        tick.sending = should_be_posting(&permissions, sharing);
+        if tick.sending {
+            // Offers the newest fix if it moved enough. The movement decision is in
+            // logic, where it is tested; this only drives it.
+            self.engine.offer_position();
+        }
+
+        match block_on(self.engine.flush()) {
+            Ok(sent) => tick.posted = sent,
+            // An unreachable relay is ordinary, not something to log every half second:
+            // the outbox keeps the post, and the next pass tries again.
+            Err(_) => tick.offline = true,
+        }
+
+        // Fetching is the expensive thing on the wire. An empty feed is worth asking
+        // about once a minute, not every pass, or every phone in a quiet circle spends
+        // its day asking about a circle nobody has spoken in.
+        let elapsed = now.saturating_sub(self.last_poll_ms);
+        if sharing && worth_polling(self.last_poll_was_empty, elapsed) {
+            match block_on(self.engine.poll(now)) {
+                Ok(events) => {
+                    tick.polled = events;
+                    self.last_poll_was_empty = events == 0;
+                }
+                Err(_) => {
+                    tick.offline = true;
+                    self.last_poll_was_empty = true;
+                }
+            }
+            self.last_poll_ms = now;
+        }
+        tick
+    }
+
+    /// How long to sleep until the next pass.
+    ///
+    /// The loop must be awake often enough to catch a position the moment a person
+    /// starts moving. Somewhere between the lowest postable interval and that.
+    pub fn interval() -> std::time::Duration {
+        std::time::Duration::from_millis(500)
     }
 }

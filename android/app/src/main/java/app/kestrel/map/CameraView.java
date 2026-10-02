@@ -25,9 +25,15 @@ import java.util.List;
 final class CameraView extends SurfaceView implements SurfaceHolder.Callback, Camera.PreviewCallback {
     private static final String TAG = "Kestrel";
 
-    /** Preview size. Small on purpose: a QR code is legible at 640 wide. */
-    private static final int WIDTH = 640;
-    private static final int HEIGHT = 480;
+    /**
+     * Preview size. Small on purpose: a QR code is legible at 640 wide.
+     *
+     * <p>Must match {@code SCAN_WIDTH} and {@code SCAN_HEIGHT} in the Rust scanner. The
+     * native decoder is handed the frame and these two numbers and no image header, so a
+     * mismatch here would read the frame at the wrong stride and find nothing.
+     */
+    static final int WIDTH = 640;
+    static final int HEIGHT = 480;
 
     private final Context context;
     private final int rotation;

@@ -267,7 +267,14 @@ final class Bridge {
         return frames.poll();
     }
 
-    /** Ask for one more frame, now that the last one has been dealt with. */
+    /**
+     * Ask for one more preview frame.
+     *
+     * <p>Called from Rust, one frame at a time. The camera copies a frame only when
+     * this has been called, which is what keeps a thirty-frames-a-second camera from
+     * allocating half a megabyte thirty times a second for a code that is read by one
+     * frame out of thirty.
+     */
     static void wantFrame() {
         wantsFrame = true;
     }

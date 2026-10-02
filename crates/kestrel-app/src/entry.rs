@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use crate::{
     android::Android,
-    engine::{Engine, NetSink},
+    engine::{self, Engine, NetSink},
     logic, map,
     permissions::{self, Permission},
     platform::Platform,
@@ -51,7 +51,9 @@ pub fn android_main(app: AndroidApp) {
         *slot = app.activity_as_ptr() as i64;
     }
 
-    let platform: Arc<dyn Platform> = Arc::new(Android::new(shared.clone()));
+    let android = Arc::new(Android::new(shared.clone()));
+    let platform: Arc<dyn Platform> = android.clone();
+    start_scanner(android);
 
     // Restore the circle before the first frame, so the app opens on the map rather than
     // on a welcome screen the user dismissed yesterday.
@@ -96,6 +98,31 @@ pub fn android_main(app: AndroidApp) {
     };
 
     let shared = shared.clone();
+
+    // The share loop runs whether or not the window is open. A position is only worth
+    // posting when it moves, and a post is only worth sending when the permissions and
+    // the user's own toggle both agree — which is why there is one tick deciding it.
+    //
+    // Spawned after the engine exists: the loop owns an `Arc` to it, and a loop with no
+    // engine is a thread that exists to be confused with a problem.
+    let engine_for_loop = engine.clone();
+    let shared_for_loop = shared.clone();
+    std::thread::Builder::new()
+        .name("kestrel-share".to_string())
+        .spawn(move || {
+            let Some(engine) = engine_for_loop else {
+                // No relay means no sharing.
+                return;
+            };
+            let mut loop_ = engine::ShareLoop::new(engine, shared_for_loop);
+            loop {
+                // The wall clock, not a counter. A device with a wrong clock that counts
+                // ticks would look like it posts on time while posting at the wrong hour.
+                let _ = loop_.tick(state::now_ms());
+                std::thread::sleep(engine::ShareLoop::interval());
+            }
+        })
+        .ok();
 
     let result = eframe::run_native(
         "Kestrel",
@@ -183,6 +210,52 @@ impl eframe::App for App {
         });
     }
 }
+
+/// The scanner loop.
+///
+/// Runs on its own thread rather than the frame loop, because decoding is a few
+/// milliseconds and doing it on the frame would make the map stutter while a scan was
+/// running. It asks for one frame at a time and stops the moment it reads a code, so a
+/// scan costs the camera a second of attention rather than the app a second of frames.
+///
+/// Started once by [`start_scanner`] and left running for the life of the process: a
+/// scan that is not in progress simply finds no frames and waits, which is cheaper than
+/// starting and stopping a thread for each one.
+#[cfg(target_os = "android")]
+fn start_scanner(android: Arc<crate::android::Android>) {
+    std::thread::Builder::new()
+        .name("kestrel-scan".to_string())
+        .spawn(move || {
+            loop {
+                android.want_frame();
+                // Asked for, then waited for. A short sleep rather than a spin: the frame
+                // arrives from the camera's own thread and there is nothing to gain from
+                // asking for it faster.
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                let Some(frame) = android.next_frame() else {
+                    continue;
+                };
+                if let Some(text) = scan_frame(&frame) {
+                    on_scan(&text);
+                }
+            }
+        })
+        .ok();
+}
+
+/// Decode one preview frame.
+///
+/// The frame is NV21 at 640 by 480, which is what [`CameraView`] asks the camera for.
+#[cfg(target_os = "android")]
+fn scan_frame(frame: &[u8]) -> Option<String> {
+    crate::qr::decode_frame(frame, SCAN_WIDTH, SCAN_HEIGHT)
+}
+
+/// The preview size the scanner asks for. Must match the Java side.
+#[cfg(target_os = "android")]
+const SCAN_WIDTH: u32 = 640;
+#[cfg(target_os = "android")]
+const SCAN_HEIGHT: u32 = 480;
 
 /// A platform for a build with no phone.
 ///

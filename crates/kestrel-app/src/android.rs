@@ -91,6 +91,15 @@ impl Android {
         })
     }
 
+    /// Ask the platform for one more preview frame.
+    ///
+    /// The Java side copies a frame only when this has been called, which is what keeps
+    /// a thirty-frames-a-second camera from allocating half a megabyte thirty times a
+    /// second for a code that is read by one frame out of thirty.
+    pub fn want_frame(&self) {
+        let _ = self.call0("wantFrame");
+    }
+
     /// Pull the next camera frame, if one has arrived.
     ///
     /// The one call that returns something. It goes through the same path as the rest

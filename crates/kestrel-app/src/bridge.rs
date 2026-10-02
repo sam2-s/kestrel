@@ -111,6 +111,9 @@ pub const INTO_JAVA: &[IntoJava] = &[
         signature: "nextFrame()[B",
         arity: 0,
     },
+    // Asks Java for one more preview frame. Without this the queue is never filled and
+    // the scanner sits waiting on a camera that has been told to hold its frames.
+    IntoJava { java: "wantFrame", signature: "wantFrame()V", arity: 0 },
 ];
 
 /// The JNI signature of a method in `INTO_JAVA`.

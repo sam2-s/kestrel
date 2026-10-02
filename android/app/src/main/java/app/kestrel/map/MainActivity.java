@@ -206,6 +206,8 @@ public final class MainActivity extends android.app.NativeActivity {
             return;
         }
         String text = data.getStringExtra(ScanActivity.EXTRA_TEXT);
+        // The native side decides what the text means. Java does not check whether it is
+        // an invitation, so scanning and typing cannot disagree about what counts.
         Bridge.reportScan(text == null ? "" : text);
     }
 }
