@@ -247,7 +247,7 @@ pub const INVITE_TTL_MS: i64 = 60 * 60 * 1000;
 ///
 /// Only what is not already in the circle: the name the user chose and whether they
 /// want the fine or the approximate position shared by default.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Settings {
     /// The name shown to the circle. Empty until the user sets one, because an app
     /// that invents a name for someone is a name the circle will trust.
@@ -265,6 +265,12 @@ pub struct Settings {
     /// Where to send beacons, if the user has set one up.
     #[serde(default)]
     pub beacon: Option<String>,
+    /// The language, by index into [`crate::strings::Language::ALL`].
+    ///
+    /// An index rather than a name, so adding a language later cannot silently reset
+    /// everyone's choice. Absent means the first language, which is English.
+    #[serde(default)]
+    pub language: u8,
 }
 
 /// Read the settings, or the defaults.
@@ -373,6 +379,7 @@ mod tests {
             tor: false,
             follow: true,
             beacon: None,
+            language: 0,
         };
         let bytes = serde_json::to_vec(&settings).unwrap();
         let back: Settings = serde_json::from_slice(&bytes).unwrap();

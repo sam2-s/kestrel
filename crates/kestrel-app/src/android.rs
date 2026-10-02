@@ -241,38 +241,69 @@ pub fn data_dir() -> Option<std::path::PathBuf> {
     }
     let ctx = ndk_context::android_context();
     let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) };
+    let context_type = signature_of("()Landroid/content/Context;");
+    let activity_thread = jni::strings::JNIString::new("android/app/ActivityThread");
+    let current_application = jni::strings::JNIString::new("currentApplication");
+    let get_files_dir = jni::strings::JNIString::new("getFilesDir");
+    let get_absolute_path = jni::strings::JNIString::new("getAbsolutePath");
+    let files_dir = signature_of("()Ljava/io/File;");
+    let text = signature_of("()Ljava/lang/String;");
     let path = vm
         .attach_current_thread(|env| -> Result<Option<String>, jni::errors::Error> {
-            let Ok(class) = env.find_class("android/app/ActivityThread") else {
+            let Ok(class) = env.find_class(activity_thread.as_ref()) else {
                 return Ok(None);
             };
             let current = env.call_static_method(
                 class,
-                "currentApplication",
-                "()Landroid/content/Context;",
+                current_application.as_ref(),
+                context_type.method_signature(),
                 &[],
             )?;
             if current.is_null() {
                 return Ok(None);
             }
-            let context = jni::objects::JObject::from(current);
-            let name = jni::strings::JNIString::new("getFilesDir");
-            let dir = env.call_method(&context, name.as_ref(), "()Ljava/io/File;", &[])?;
+            let context = current.l()?;
+            let dir = env.call_method(
+                &context,
+                get_files_dir.as_ref(),
+                files_dir.method_signature(),
+                &[],
+            )?;
             if dir.is_null() {
                 return Ok(None);
             }
-            let file = jni::objects::JObject::from(dir.l()?);
-            let name = jni::strings::JNIString::new("getAbsolutePath");
-            let path =
-                env.call_method(&file, name.as_ref(), "()Ljava/lang/String;", &[])?;
+            let file = dir.l()?;
+            let path = env.call_method(
+                &file,
+                get_absolute_path.as_ref(),
+                text.method_signature(),
+                &[],
+            )?;
             if path.is_null() {
                 return Ok(None);
             }
-            let text = path.l()?.try_to_string(env)?;
-            Ok(Some(text))
+            // A checked cast rather than a reinterpretation: a wrong return type from
+            // Java then fails here instead of reading a File's bytes as a path.
+            let object = path.l()?;
+            let string = jni::objects::JString::cast_local(env, object)?;
+            Ok(Some(string.try_to_string(env)?))
         })
         .unwrap_or(None);
     path.filter(|p| !p.is_empty()).map(std::path::PathBuf::from)
+}
+
+/// Parse a signature literal into something jni will accept.
+///
+/// Returns the owned form and a method that borrows it, because
+/// [`RuntimeMethodSignature::method_signature`] borrows from the value it parses — which
+/// is why a helper returning only the borrow could not work. The parsed value is a few
+/// bytes and there are four call sites, so building it per call is cheaper than any
+/// lifetime dance would be.
+fn signature_of(sig: &str) -> jni::signature::RuntimeMethodSignature {
+    // Every argument is a literal in this file, so a parse failure is a typo here and
+    // not a runtime condition.
+    jni::signature::RuntimeMethodSignature::from_str(sig)
+        .unwrap_or_else(|e| panic!("{sig} is not a method signature: {e}"))
 }
 
 /// The JNI signature of each bridge method.
@@ -466,8 +497,8 @@ fn finish_activity() {
             // what a local reference needs to be valid for.
             let activity =
                 unsafe { jni::objects::JObject::from_raw(env, raw as jni::sys::jobject) };
-            let signature = jni::signature::RuntimeMethodSignature::from_str("()V")?;
             let name = jni::strings::JNIString::new("finish");
+            let signature = jni::signature::RuntimeMethodSignature::from_str("()V")?;
             env.call_method(&activity, name.as_ref(), signature.method_signature(), &[])?;
             Ok(())
         });

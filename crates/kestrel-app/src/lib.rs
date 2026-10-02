@@ -13,6 +13,8 @@ pub mod logic;
 pub mod map;
 pub mod permissions;
 pub mod platform;
+pub mod qr;
+pub mod screens;
 pub mod state;
 pub mod store;
 pub mod strings;

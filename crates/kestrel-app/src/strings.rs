@@ -76,6 +76,20 @@ impl Language {
         }
     }
 
+    /// The language at an index, for a stored setting.
+    ///
+    /// The setting is saved as an index rather than a name so that adding a language
+    /// cannot invalidate anybody's saved choice: the list only grows, so an index written
+    /// by an older build still names the same language. A name would break on a rename.
+    pub fn from_index(index: u8) -> Option<Language> {
+        Language::ALL.get(index as usize).copied()
+    }
+
+    /// This language's index, for storing.
+    pub fn index(self) -> u8 {
+        Language::ALL.iter().position(|l| *l == self).unwrap_or(0) as u8
+    }
+
     /// Pick the closest language the app has for a platform locale.
     ///
     /// Matched on the primary subtag only, so `pt-BR` and `pt-PT` both find Portuguese
@@ -477,6 +491,18 @@ pub fn keys() -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_language_survives_a_round_trip_through_its_index() {
+        for language in Language::ALL {
+            assert_eq!(Language::from_index(language.index()), Some(language));
+        }
+        // Out of range is None, not a panic: the file is user-writable.
+        assert_eq!(Language::from_index(200), None);
+        assert_eq!(Language::from_index(255), None);
+        // And the default is the first language, so an unset setting means English.
+        assert_eq!(Language::default().index(), 0);
+    }
 
     #[test]
     fn every_language_names_itself_in_itself() {

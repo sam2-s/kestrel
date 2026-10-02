@@ -17,10 +17,21 @@ use std::sync::Arc;
 
 use crate::{
     android::Android,
+    engine::{Engine, NetSink},
+    logic, map,
     permissions::{self, Permission},
-    platform::{Host, Platform},
+    platform::Platform,
+    screens::{self, Ctx},
     state::{self, Fix, Screen, Shared},
+    store,
 };
+
+/// The relay the app talks to.
+///
+/// The reference deployment's. Not configurable yet: a settings field that does nothing
+/// would be worse than no field, and a person running their own relay needs a decision
+/// made about how the app trusts it first.
+const DEFAULT_RELAY: &str = "https://starlingmap.app";
 
 /// The entry point `NativeActivity` calls, on its own thread.
 ///
@@ -41,6 +52,49 @@ pub fn android_main(app: AndroidApp) {
     }
 
     let platform: Arc<dyn Platform> = Arc::new(Android::new(shared.clone()));
+
+    // Restore the circle before the first frame, so the app opens on the map rather than
+    // on a welcome screen the user dismissed yesterday.
+    let settings = store::load_settings();
+    let channel = match logic::restore_circle(None) {
+        Some(circle) => {
+            let channel = circle.channel().to_string();
+            if let Ok(mut circles) = shared.circles.lock() {
+                *circles = vec![circle];
+            }
+            Some(channel)
+        }
+        // No circle, or one whose keys will not parse. The app is fully usable and starts
+        // on the welcome screen.
+        None => None,
+    };
+    if let Ok(mut state) = shared.state.lock() {
+        state.name = settings.name;
+        state.language =
+            crate::strings::Language::from_index(settings.language).unwrap_or_default();
+        if let Some(camera) = store::load_camera() {
+            state.camera = map::Camera::new(camera.lat, camera.lon, camera.zoom);
+        }
+        if channel.is_some() {
+            state.go(Screen::Map);
+        }
+    }
+
+    // The engine, pointed at whatever circle was restored. A relay that will not
+    // resolve leaves the app fully usable with no sharing, which is better than
+    // refusing to start.
+    let engine = match NetSink::new(DEFAULT_RELAY) {
+        Ok(sink) => {
+            let engine = Arc::new(Engine::new(shared.clone(), Arc::new(sink)));
+            engine.attach(channel.as_deref().unwrap_or_default());
+            Some(engine)
+        }
+        Err(e) => {
+            log::warn!("no relay configured: {e}");
+            None
+        }
+    };
+
     let shared = shared.clone();
 
     let result = eframe::run_native(
@@ -60,7 +114,7 @@ pub fn android_main(app: AndroidApp) {
                 .with_decorations(false),
             ..Default::default()
         },
-        Box::new(move |_cc| Ok(Box::new(build(shared, platform)))),
+        Box::new(move |_cc| Ok(Box::new(build(shared.clone(), platform.clone(), engine)))),
     );
 
     if let Err(e) = result {
@@ -83,31 +137,59 @@ fn shared() -> Arc<Shared> {
     state::shared()
 }
 
-/// What the app is doing, and what it should show about that.
+/// What the egui side owns.
 ///
-/// A struct rather than a set of statics, so the screens are functions of it and can be
-/// reasoned about in a test.
+/// Small on purpose: the state is in [`crate::state`] because the service and the
+/// decoder thread need it too, and this struct only holds what the UI alone needs.
 struct App {
     /// The platform, for the things only a phone can do.
     platform: Arc<dyn Platform>,
     /// What every screen reads and writes.
     shared: Arc<Shared>,
+    /// The share loop. `None` when no relay could be reached, which leaves the app fully
+    /// usable and simply not sharing.
+    engine: Option<Arc<Engine>>,
 }
 
-/// The egui application, built by eframe and handed to us once.
-///
-/// egui is re-exported by eframe, so this file names it `egui` rather than depending on
-/// a second copy of the same crate at a possibly different version.
-fn build(shared: Arc<Shared>, platform: Arc<dyn Platform>) -> App {
-    App { platform, shared }
+/// Build the egui application.
+fn build(
+    shared: Arc<Shared>,
+    platform: Arc<dyn Platform>,
+    engine: Option<Arc<Engine>>,
+) -> App {
+    App { platform, shared, engine }
 }
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let shared = self.shared.clone();
-        let platform = self.platform.clone();
-        draw(ui, &shared, platform);
+        // The area being laid out into, in points. The map's projection needs it, and the
+        // drawing needs the scale factor so a marker is the same physical size on a dense
+        // screen and a sparse one.
+        let viewport = ui.available_size_before_wrap();
+        // The platform's pixels-per-point, falling back to 1. A fallback of 1 makes
+        // everything slightly small on a device that does report one, which is a better
+        // failure than a fallback of 0, which makes nothing draw at all.
+        let dpr =
+            ui.ctx().input(|i| i.viewport().native_pixels_per_point).unwrap_or(1.0) as f32;
+        let ctx = Ctx {
+            shared: self.shared.clone(),
+            platform: self.platform.clone(),
+            engine: self.engine.clone(),
+            viewport,
+            dpr,
+        };
+        egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
+            screens::draw(ui, &ctx);
+        });
     }
+}
+
+/// A platform for a build with no phone.
+///
+/// The host preview, and the answer for a desktop build: the app runs, draws and
+/// explains itself, and simply cannot ask a phone for anything.
+pub fn host_platform() -> Arc<dyn Platform> {
+    Arc::new(crate::platform::Host::at(state::now_ms()))
 }
 
 /// The activity came to the foreground.
@@ -173,235 +255,6 @@ pub fn on_scan(text: &str) {
     shared().offer_scan(text.to_string());
 }
 
-/// The drawing. One function, because everything here is a screen.
-fn draw(ui: &mut egui::Ui, shared: &Arc<Shared>, platform: Arc<dyn Platform>) {
-    let screen = shared.state.lock().map(|s| s.screen).unwrap_or_default();
-
-    let platform_for = platform.clone();
-    let shared_for = shared.clone();
-    egui::CentralPanel::default().show(ui, |ui| match screen {
-        Screen::Welcome => welcome(ui, shared, platform),
-        Screen::Map => map(ui, shared, platform),
-        Screen::Join => join(ui, shared, platform),
-        Screen::Review => review(ui, shared),
-        Screen::Settings => settings(ui, shared, platform),
-        Screen::Locked => locked(ui, shared),
-        Screen::Wiped => wiped(ui, shared),
-    });
-
-    // Any permission worth asking for, asked once the current screen has drawn. Asking
-    // from inside a draw would pop a dialog over a half-built frame.
-    if let Ok(p) = shared_for.permissions.lock() {
-        if let Some(wanted) = p.next_to_ask() {
-            platform_for.request(wanted);
-        }
-    }
-}
-
-fn welcome(ui: &mut egui::Ui, shared: &Arc<Shared>, platform: Arc<dyn Platform>) {
-    ui.add_space(40.0);
-    ui.heading("Kestrel");
-    ui.label("Share your location with a small circle, and nobody else.");
-    ui.add_space(20.0);
-
-    if !shared.has_circle() {
-        if ui.button("Create a circle").clicked() {
-            // Not wired to key creation yet: a circle needs a seed, and choosing where
-            // that seed comes from is a decision about how much this app trusts the
-            // device it runs on. Deliberately a dead button until that is settled rather
-            // than a plausible-looking one.
-            tell(ui, shared, "Coming next: circle creation");
-        }
-        if ui.button("Join a circle").clicked() {
-            if let Ok(mut state) = shared.state.lock() {
-                state.go(Screen::Join);
-            }
-        }
-    } else if ui.button("Open the map").clicked() {
-        if let Ok(mut state) = shared.state.lock() {
-            state.go(Screen::Map);
-        }
-    }
-
-    ui.add_space(20.0);
-    // The permission line comes first on purpose. Everything this app does depends on
-    // location, and finding that out after tapping "create" is worse than being told up
-    // front.
-    if let Ok(p) = shared.permissions.lock() {
-        ui.label(p.summary());
-        if let Some(needed) = p.next_to_ask() {
-            if ui.button(ask_label(needed)).clicked() {
-                platform.request(needed);
-            }
-        }
-    }
-}
-
-fn map(ui: &mut egui::Ui, shared: &Arc<Shared>, platform: Arc<dyn Platform>) {
-    ui.heading("Map");
-    let sharing = shared.state.lock().map(|s| s.sharing).unwrap_or(false);
-    ui.label(if sharing { "Sharing" } else { "Not sharing" });
-
-    if sharing {
-        if ui.button("Stop sharing").clicked() {
-            platform.set_sharing(false);
-            if let Ok(mut p) = shared.permissions.lock() {
-                p.set_sharing(false);
-            }
-        }
-    } else if ui.button("Share my location").clicked() {
-        platform.set_sharing(true);
-        if let Ok(mut p) = shared.permissions.lock() {
-            p.set_sharing(true);
-        }
-    }
-
-    ui.add_space(12.0);
-    if ui.button("Scan a code").clicked() {
-        platform.start_scan();
-    }
-    if ui.button("Settings").clicked() {
-        if let Ok(mut state) = shared.state.lock() {
-            state.go(Screen::Settings);
-        }
-    }
-}
-
-fn join(ui: &mut egui::Ui, shared: &Arc<Shared>, platform: Arc<dyn Platform>) {
-    ui.heading("Join a circle");
-    ui.label("Ask someone in the circle for their code, then scan or type it.");
-    ui.add_space(8.0);
-
-    // Held in the shared state rather than a local, because a rotation rebuilds this
-    // whole frame and a local would lose whatever had been typed.
-    let mut typed =
-        shared.state.lock().ok().and_then(|s| s.invite.clone()).unwrap_or_default();
-    ui.horizontal(|ui| {
-        ui.text_edit_singleline(&mut typed);
-        if ui.button("Join").clicked() && !typed.is_empty() {
-            tell(ui, shared, "Joining is coming next");
-        }
-    });
-    if let Ok(mut state) = shared.state.lock() {
-        state.invite = Some(typed);
-    }
-
-    ui.add_space(8.0);
-    if ui.button("Scan instead").clicked() {
-        // Through the platform, not through the state, so this screen works the same
-        // whether the code was scanned or typed.
-        platform.start_scan();
-    }
-    if ui.button("Back").clicked() {
-        if let Ok(mut state) = shared.state.lock() {
-            state.go(Screen::Welcome);
-        }
-    }
-}
-
-fn review(ui: &mut egui::Ui, shared: &Arc<Shared>) {
-    ui.heading("Someone is asking to join");
-    // The safety number is the whole point of this screen: it is what the two people
-    // compare out loud, and it is the only thing standing between a real member and
-    // someone who found the code.
-    if let Ok(state) = shared.state.lock() {
-        if let Some((number, name)) = &state.pending_name {
-            ui.label(format!("{name} says their number is"));
-            ui.heading(number);
-        }
-    }
-    ui.label("Read it out. If it does not match, they are not who they say they are.");
-    ui.add_space(8.0);
-    if ui.button("Accept").clicked() {
-        tell(ui, shared, "Accepting is coming next");
-    }
-    if ui.button("Decline").clicked() {
-        if let Ok(mut state) = shared.state.lock() {
-            state.go(Screen::Map);
-            state.pending_name = None;
-        }
-    }
-}
-
-fn settings(ui: &mut egui::Ui, shared: &Arc<Shared>, platform: Arc<dyn Platform>) {
-    ui.heading("Settings");
-
-    if let Ok(p) = shared.permissions.lock() {
-        for (name, grant) in [
-            ("Location", p.location),
-            ("Background location", p.background),
-            ("Notifications", p.notifications),
-            ("Camera", p.camera),
-        ] {
-            ui.horizontal(|ui| {
-                ui.label(format!("{name}: {}", grant.label()));
-                if grant.can_only_be_fixed_in_settings() {
-                    if ui.small_button("Settings").clicked() {
-                        platform.open_settings(permission_of(name));
-                    }
-                }
-            });
-        }
-    }
-
-    ui.add_space(12.0);
-    ui.label("Version 0.1.0 · GPL-3.0-or-later");
-    if ui.button("Close").clicked() {
-        if let Ok(mut state) = shared.state.lock() {
-            state.go(Screen::Map);
-        }
-    }
-}
-
-fn locked(ui: &mut egui::Ui, shared: &Arc<Shared>) {
-    ui.heading("Locked");
-    ui.label("Enter your passcode.");
-    // Not implemented. A passcode screen that accepts anything is worse than none: it
-    // would tell the user the app is protected when it is not.
-    if ui.button("Not now").clicked() {
-        tell(ui, shared, "The app lock is not wired up yet");
-    }
-}
-
-fn wiped(ui: &mut egui::Ui, shared: &Arc<Shared>) {
-    ui.heading("Nothing here");
-    ui.label("The keys were destroyed. Nothing that was shared can be recovered.");
-    if ui.button("Close").clicked() {
-        if let Ok(mut state) = shared.state.lock() {
-            state.go(Screen::Welcome);
-        }
-    }
-}
-
-fn tell(ui: &mut egui::Ui, shared: &Arc<Shared>, message: &str) {
-    ui.colored_label(egui::Color32::YELLOW, message);
-    if let Ok(mut state) = shared.state.lock() {
-        state.tell(message);
-    }
-}
-
-fn ask_label(p: Permission) -> &'static str {
-    match p {
-        Permission::Location => "Allow location",
-        Permission::BackgroundLocation => "Allow background location",
-        Permission::Notifications => "Allow notifications",
-        Permission::Camera => "Allow the camera",
-    }
-}
-
-fn permission_of(name: &str) -> Permission {
-    match name {
-        "Location" => Permission::Location,
-        "Background location" => Permission::BackgroundLocation,
-        "Notifications" => Permission::Notifications,
-        _ => Permission::Camera,
-    }
-}
-
-/// A platform for a build with no phone.
-///
-/// The host preview, and the answer for a desktop build: the app runs, draws and
-/// explains itself, and simply cannot ask a phone for anything.
-pub fn host_platform() -> Arc<dyn Platform> {
-    Arc::new(Host::at(state::now_ms()))
-}
+/// A one-line note for the platform, used when nothing is wired up.
+#[allow(dead_code)]
+fn unused_placeholder() {}

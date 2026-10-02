@@ -112,6 +112,36 @@ pub struct AppState {
     pub scanned: Option<String>,
     /// The safety number of a pending join request, and the name beside it.
     pub pending_name: Option<(String, String)>,
+    /// Where the map is looking. Restored between runs so the app opens where the user
+    /// left it rather than in the middle of the ocean.
+    pub camera: crate::map::Camera,
+    /// The language the app is in.
+    pub language: crate::strings::Language,
+    /// Which share screen is up, if any.
+    pub share_sheet: Option<ShareSheet>,
+    /// A field the user is typing into. Kept in the state rather than a widget's memory
+    /// so a rotation does not lose it.
+    pub typing: String,
+    /// egui's zoom factor for the pinch in progress last frame. Zero when there is not a
+    /// pinch, which is what makes the next frame's ratio the whole gesture.
+    pub pinch_spread: f32,
+}
+
+/// The sheet at the bottom of the map.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShareSheet {
+    /// Invite someone, with the user's own code.
+    Invite,
+    /// Join someone, with their code.
+    Join,
+    /// Settings.
+    Settings,
+    /// The places this device watches.
+    Places,
+    /// Create the help beacon.
+    Help,
+    /// Turn the app lock on or off.
+    Lock,
 }
 
 impl AppState {
@@ -198,6 +228,49 @@ impl Shared {
     /// The newest position, if there is one.
     pub fn newest_fix(&self) -> Option<Fix> {
         self.fix.lock().ok().and_then(|f| *f)
+    }
+
+    /// Build this frame's map, holding the circle's lock for the duration.
+    ///
+    /// A `Circle` holds key material and is deliberately not `Clone`, so a caller that
+    /// needs to read it locks the field for the length of its work instead of taking a
+    /// copy. This is that, in one place, so no screen has to be trusted to remember.
+    pub fn map_frame(
+        &self,
+        camera: crate::map::Camera,
+        basemap: crate::map::Basemap,
+        viewport_px: (f64, f64),
+        now: i64,
+        self_id: &str,
+    ) -> Option<crate::map::Frame> {
+        let circles = self.circles.lock().ok()?;
+        let circle = circles.first()?;
+        Some(crate::map::frame(circle, &camera, basemap, viewport_px, now, self_id))
+    }
+
+    /// This device's channel, read out under the lock.
+    pub fn channel(&self) -> Option<String> {
+        let circles = self.circles.lock().ok()?;
+        circles.first().map(|c| c.channel().to_string())
+    }
+
+    /// Mint this device's invitation, holding the circle's lock.
+    pub fn mint_invite(&self, now: i64) -> Option<kestrel_core::invite::Invite> {
+        let circles = self.circles.lock().ok()?;
+        let circle = circles.first()?;
+        Some(crate::logic::mint_invite(circle, now))
+    }
+
+    /// Run a closure over the active circle, under the lock.
+    ///
+    /// The only way to reach a `Circle` at all. `f` is short and must not block: it is on
+    /// the frame path.
+    pub fn with_circle<T>(
+        &self,
+        f: impl FnOnce(&mut kestrel_core::session::Circle) -> T,
+    ) -> Option<T> {
+        let mut circles = self.circles.lock().ok()?;
+        circles.first_mut().map(f)
     }
 
     /// Hand a scanned code to the UI.
