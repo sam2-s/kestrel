@@ -17,7 +17,7 @@ use kestrel_core::{
     session::Circle,
     wire::{Feed, Post},
 };
-use kestrel_net::{Outbox, Relay};
+use kestrel_net::{Outbox, Relay, block_on};
 
 use crate::{
     handshake, logic,
@@ -1389,28 +1389,6 @@ pub struct Tick {
     pub sending: bool,
     /// The relay could not be reached this pass.
     pub offline: bool,
-}
-
-/// Runs a future to completion without a runtime.
-///
-/// No async runtime of its own: the engine's futures are driven to completion on the
-/// calling thread, which for this app is the share loop thread. A `std::task::Waker`
-/// that never wakes is enough, because every future here is polled to readiness
-/// immediately — `Relay` responds, and the outbox either accepts the post or it does
-/// not, both of which settle without waiting.
-fn block_on<F: std::future::Future>(mut future: F) -> F::Output {
-    use std::task::{Context, Poll, Waker};
-    let waker = Waker::noop();
-    let mut cx = Context::from_waker(waker);
-    // A pinned future polled to completion on one thread and not shared is safe: there
-    // is no move once polling starts, and nothing here outlives the call.
-    let mut future = unsafe { std::pin::Pin::new_unchecked(&mut future) };
-    loop {
-        match future.as_mut().poll(&mut cx) {
-            Poll::Ready(value) => return value,
-            Poll::Pending => std::thread::yield_now(),
-        }
-    }
 }
 
 /// The loop that keeps a share alive: queue the fix when it moves, flush the outbox,

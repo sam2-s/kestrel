@@ -373,6 +373,48 @@ pub fn our_protocol() -> &'static str {
     kestrel_core::PROTO
 }
 
+// ---------------------------------------------------------------- the runtime
+
+/// The one runtime this crate creates.
+///
+/// Kestrel does not run an async application: there is no task, no scheduler of
+/// its own, and every future is driven to completion on the thread that wanted
+/// the answer. What cannot be faked that way is the machinery underneath — a
+/// socket registers with a reactor, a name resolves on a blocking pool, a
+/// timeout is a timer, and all three refuse to work outside a runtime's
+/// context. Polling such a future in a loop does not advance it: it panics,
+/// which under `panic = "abort"` means a failed post closes the app.
+///
+/// So the runtime exists for the transport, entered by [`block_on`] and by
+/// nothing else. Two workers, which is enough for a request and a name lookup
+/// to be in flight at once and few enough that nobody is running a second
+/// scheduler for fun.
+static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+
+/// The runtime, created the first time something needs to talk to a relay.
+pub fn runtime() -> &'static tokio::runtime::Runtime {
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("kestrel-io")
+            // The I/O driver and the timers. Without the first a socket has
+            // nowhere to report readiness to; without the second a client
+            // timeout is a duration nobody counts down.
+            .enable_all()
+            .build()
+            .expect("a runtime for the relay")
+    })
+}
+
+/// Drive one future to completion, on the calling thread.
+///
+/// Safe from as many threads as care to call it at once: the caller parks until
+/// the future is ready rather than spinning on it, so a relay that takes a
+/// second costs a sleeping thread and not a core.
+pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
+    runtime().block_on(future)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
