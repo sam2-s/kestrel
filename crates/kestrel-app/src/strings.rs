@@ -179,6 +179,7 @@ const EN: &[(&str, &str)] = &[
     ("settings.passcode_hint", "At least six characters"),
     ("settings.wipe", "Erase everything"),
     ("settings.wipe_hint", "Deletes the keys. Nothing shared can be recovered."),
+    ("settings.wipe_again", "Tap again to erase everything"),
     ("settings.relay", "Relay"),
     (
         "settings.relay_hint",
@@ -337,6 +338,7 @@ const ES: &[(&str, &str)] = &[
     ("settings.passcode_hint", "Al menos seis caracteres"),
     ("settings.wipe", "Borrarlo todo"),
     ("settings.wipe_hint", "Elimina las claves. Nada de lo compartido se podrá recuperar."),
+    ("settings.wipe_again", "Toca de nuevo para borrarlo todo"),
     ("settings.relay", "Servidor relay"),
     (
         "settings.relay_hint",
@@ -462,6 +464,7 @@ const DE: &[(&str, &str)] = &[
     ("settings.passcode", "Passcode"),
     ("settings.wipe", "Alles löschen"),
     ("settings.wipe_hint", "Löscht die Schlüssel. Nichts Geteiltes ist wiederherstellbar."),
+    ("settings.wipe_again", "Noch einmal tippen, um alles zu löschen"),
     ("settings.relay", "Relay"),
     (
         "settings.relay_hint",
@@ -639,6 +642,9 @@ mod tests {
                 "settings.relay_save",
                 "settings.relay_saved",
                 "settings.relay_offline",
+                "settings.wipe",
+                "settings.wipe_hint",
+                "settings.wipe_again",
             ] {
                 let text = get(language, key);
                 assert!(!text.is_empty() && text != key, "{language:?} has no {key}");

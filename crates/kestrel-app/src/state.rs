@@ -150,6 +150,12 @@ pub struct AppState {
     /// The relay address as last edited, so a field does not start empty every
     /// frame and lose what is being typed into it.
     pub relay: String,
+    /// Whether "erase everything" has been tapped once already.
+    ///
+    /// One tap is a person reading a row; two is a decision. There is no dialog
+    /// to draw here, and a control that erases the keys behind a single tap on
+    /// a screen with a dozen other taps is a control somebody will hit.
+    pub confirm_wipe: bool,
     /// egui's zoom factor for the pinch in progress last frame. Zero when there is not a
     /// pinch, which is what makes the next frame's ratio the whole gesture.
     pub pinch_spread: f32,

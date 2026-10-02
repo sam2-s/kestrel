@@ -387,21 +387,41 @@ pub fn save_camera(camera: LastCamera) {
     }
 }
 
-/// Delete everything this app stored.
+/// The last time a position was posted.
+pub fn last_share_path() -> std::path::PathBuf {
+    dir().join("last-share")
+}
+
+/// Every file this app writes, by name.
 ///
-/// Used by the duress passcode. Not a partial wipe: a duress wipe that left the
-/// location history behind would defeat the point of typing a second passcode while
-/// someone is holding your phone.
+/// The one list an erase works from. Kept beside the `*_path` helpers and checked
+/// against them by a test, because a file left behind after an erase is a file
+/// that says when you last shared, and because "the keys were destroyed" is a
+/// claim that has to be true of all of it.
+const WIPE_FILES: [&str; 7] = [
+    "circle.seed",
+    "identity.json",
+    "lock.json",
+    "settings.json",
+    "camera.json",
+    "invite.json",
+    "last-share",
+];
+
+/// Delete everything this app stored, from the real directory.
 pub fn wipe() {
-    for path in [
-        seed_path(),
-        identity_path(),
-        lock_path(),
-        settings_path(),
-        camera_path(),
-        invite_path(),
-    ] {
-        let _ = std::fs::remove_file(path);
+    wipe_in(&dir());
+}
+
+/// Delete every file [`WIPE_FILES`] names, from `root`.
+///
+/// Takes a directory so the only test that deletes anything deletes from one it
+/// made. The tests run side by side in one process, and an erase running against
+/// the directory the rest of them are reading is a test that fails for reasons
+/// that have nothing to do with it.
+fn wipe_in(root: &std::path::Path) {
+    for name in WIPE_FILES {
+        let _ = std::fs::remove_file(root.join(name));
     }
 }
 
@@ -414,14 +434,14 @@ pub const BACKUP_ALLOWED: bool = false;
 
 /// When the last share was posted, for the "sent 2 min ago" line.
 pub fn last_share_ms() -> i64 {
-    read(&dir().join("last-share"))
+    read(&last_share_path())
         .and_then(|b| String::from_utf8(b).ok())
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0)
 }
 
 pub fn set_last_share_ms(at: i64) {
-    let _ = write_private(&dir().join("last-share"), at.to_string().as_bytes());
+    let _ = write_private(&last_share_path(), at.to_string().as_bytes());
 }
 
 /// A readable "how long ago" for the status line.
@@ -488,6 +508,62 @@ mod tests {
         };
         let back: Settings = serde_json::from_slice(&trimmed).unwrap();
         assert_eq!(back.relay, "", "an empty field round-trips as empty");
+    }
+
+    #[test]
+    fn erase_removes_every_file_it_names() {
+        // The claim on the wiped screen is "the keys were destroyed". Checked by
+        // deleting for real, from a directory the test made itself: an erase that
+        // runs against the directory the other tests are reading would make this
+        // pass and them flake.
+        let root =
+            std::env::temp_dir().join(format!("kestrel-wipe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("a directory to erase from");
+
+        let mut left = Vec::new();
+        for name in WIPE_FILES {
+            let path = root.join(name);
+            std::fs::write(&path, b"a key").expect("a file to erase");
+            left.push(path);
+        }
+        let bystander = root.join("not-ours");
+        std::fs::write(&bystander, b"yours").expect("a file to leave alone");
+
+        wipe_in(&root);
+
+        for path in left {
+            assert!(!path.exists(), "{path:?} survived an erase");
+        }
+        assert!(bystander.exists(), "an erase took something it does not own");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn erase_is_listed_against_every_path_this_app_writes() {
+        // The list is the whole feature, so it is checked rather than trusted: a
+        // `*_path` helper added without a matching name here is a file that
+        // survives an erase while the screen says nothing survived.
+        let written = [
+            seed_path(),
+            identity_path(),
+            lock_path(),
+            settings_path(),
+            camera_path(),
+            invite_path(),
+            last_share_path(),
+        ];
+        for path in written {
+            let name = path
+                .strip_prefix(dir())
+                .unwrap_or_else(|_| panic!("{path:?} is not stored with the rest"))
+                .to_string_lossy()
+                .into_owned();
+            assert!(
+                WIPE_FILES.contains(&name.as_str()),
+                "{name} is written by the app but not erased"
+            );
+        }
     }
 
     #[test]

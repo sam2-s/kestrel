@@ -692,6 +692,19 @@ fn settings(ui: &mut egui::Ui, ctx: &Ctx, language: Language) {
 
     app_lock_block(ui, ctx, language);
 
+    ui.separator();
+    ui.label(RichText::new(strings::get(language, "settings.wipe")).strong());
+    ui.label(RichText::new(strings::get(language, "settings.wipe_hint")).small().weak());
+    let confirming = ctx.shared.state.lock().map(|s| s.confirm_wipe).unwrap_or(false);
+    let label = if confirming {
+        strings::get(language, "settings.wipe_again")
+    } else {
+        strings::get(language, "settings.wipe")
+    };
+    if ui.button(label).clicked() {
+        wipe_everything(ctx);
+    }
+
     ui.label(strings::get(language, "settings.version"));
 
     ui.add_space(12.0);
@@ -940,6 +953,52 @@ fn save_app_lock(ctx: &Ctx, language: Language) {
     }
 }
 
+/// Erase every file this app wrote, and everything it holds in memory.
+///
+/// Two taps, because the first one only asks. What is deleted is everything:
+/// the seed, the identity, the passcode verifier, the settings, the invitation
+/// and the last time a position was posted. A wipe that left the circle behind
+/// would be a wipe that leaves the one thing worth wiping.
+fn wipe_everything(ctx: &Ctx) {
+    if !ctx.shared.state.lock().map(|s| s.confirm_wipe).unwrap_or(false) {
+        if let Ok(mut state) = ctx.shared.state.lock() {
+            state.confirm_wipe = true;
+        }
+        return;
+    }
+
+    store::wipe();
+    forget_circle(ctx);
+    // Not Welcome, and not a notice: a screen that says what happened and has
+    // one button on it. The next thing somebody sees after erasing their keys
+    // should not be a map asking to be given a location.
+    go(ctx, Screen::Wiped);
+}
+
+/// Drop the circle, and the queue behind it, now that the keys are gone.
+///
+/// Kept separate from the deletion so it can be tested without deleting: the
+/// circle is gone from disk, so it has to go from memory with it, or the map
+/// keeps drawing a circle whose keys were destroyed a moment ago.
+fn forget_circle(ctx: &Ctx) {
+    if let Ok(mut circles) = ctx.shared.circles.lock() {
+        circles.clear();
+    }
+    if let Some(engine) = &ctx.engine {
+        engine.attach("");
+        engine.attach_rendezvous("");
+    }
+    if let Ok(mut state) = ctx.shared.state.lock() {
+        state.name = String::new();
+        state.invite = None;
+        state.pending_name = None;
+        state.handshake = crate::handshake::Handshake::None;
+        state.relay = store::DEFAULT_RELAY.to_string();
+        state.language = crate::strings::Language::default();
+        state.confirm_wipe = false;
+    }
+}
+
 fn close_app_lock(ctx: &Ctx) {
     if let Ok(mut state) = ctx.shared.state.lock() {
         state.setting_lock = false;
@@ -966,6 +1025,9 @@ fn go(ctx: &Ctx, screen: Screen) {
         state.typing.clear();
         state.new_passcode.clear();
         state.setting_lock = false;
+        // Leaving settings cancels a pending erase: a tap that navigates away
+        // was not a second tap on the button.
+        state.confirm_wipe = false;
         state.go(screen);
     }
 }
@@ -1054,6 +1116,67 @@ mod tests {
         output.textures_delta.clear();
         // The notice is read once, so it does not stack up on every frame.
         assert!(ctx.shared.state.lock().unwrap().notice.is_none());
+    }
+
+    #[test]
+    fn erasing_everything_asks_first() {
+        // One tap is a person reading a row, two is a decision. There is no
+        // dialog to draw here, so the first tap has to be harmless on its own —
+        // a control that erases the keys behind one tap in a screen with a
+        // dozen other taps is a control somebody will hit.
+        let (ctx, _host) = ctx_for();
+        {
+            let mut state = ctx.shared.state.lock().unwrap();
+            state.name = "Ada".to_string();
+            state.go(Screen::Settings);
+        }
+
+        wipe_everything(&ctx);
+
+        let state = ctx.shared.state.lock().unwrap();
+        assert!(state.confirm_wipe, "the first tap did not arm the second");
+        assert_eq!(state.name, "Ada", "the first tap erased something");
+        assert_eq!(state.screen, Screen::Settings, "the first tap navigated away");
+        assert!(state.notice.is_none(), "the first tap claimed it was done");
+    }
+
+    #[test]
+    fn an_erase_takes_the_circle_with_it() {
+        use kestrel_core::identity::Identity;
+        let (base, _host) = ctx_for();
+        let sink = crate::engine::NetSink::new("http://127.0.0.1:9").ok();
+        let engine = sink.map(|s| Arc::new(Engine::new(base.shared.clone(), Arc::new(s))));
+        let ctx = Ctx { engine: engine.clone(), ..base };
+        let circle = kestrel_core::session::Circle::create(
+            Identity::generate(),
+            &kestrel_core::seal::random_bytes::<32>(),
+            1_700_000_000_000,
+        );
+        ctx.shared.circles.lock().unwrap().push(circle);
+        if let Some(engine) = &engine {
+            engine.attach("a-channel");
+            engine.attach_rendezvous("a-rendezvous");
+        }
+        {
+            let mut state = ctx.shared.state.lock().unwrap();
+            state.name = "Ada".to_string();
+            state.relay = "https://old.example".to_string();
+        }
+
+        forget_circle(&ctx);
+
+        assert!(ctx.shared.circles.lock().unwrap().is_empty(), "the circle is still there");
+        let state = ctx.shared.state.lock().unwrap();
+        assert!(state.name.is_empty(), "the display name outlived the keys");
+        assert_eq!(state.relay, store::DEFAULT_RELAY, "the old address was kept");
+        drop(state);
+        if let Some(engine) = &engine {
+            assert!(!engine.has_channel(), "the queue still has a channel to post to");
+            assert!(
+                engine.rendezvous_channel().is_empty(),
+                "the rendezvous channel outlived the keys"
+            );
+        }
     }
 
     #[test]
