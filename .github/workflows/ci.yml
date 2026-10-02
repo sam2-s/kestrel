@@ -61,12 +61,12 @@ jobs:
         run: bash tools/check-notification-privacy.sh
       - name: Vendor sync
         run: npm ci && bash tools/sync-vendor.sh
-      - name: Build release APK (unsigned)
+      - name: Build release APK (signed with the checked-in test key)
         run: cd android && ./gradlew --no-daemon assembleRelease lint
       - name: Assert only the expected permissions
         run: |
           AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | tail -1)
-          out=$("$AAPT" dump permissions android/app/build/outputs/apk/release/app-release-unsigned.apk)
+          out=$("$AAPT" dump permissions android/app/build/outputs/apk/release/app-release.apk)
           echo "$out"
           if echo "$out" | grep -E "uses-permission" \
             | grep -v "android.permission.INTERNET" \
@@ -85,4 +85,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: kestrel-release-unsigned
-          path: android/app/build/outputs/apk/release/app-release-unsigned.apk
+          path: android/app/build/outputs/apk/release/app-release.apk
