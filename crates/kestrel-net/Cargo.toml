@@ -11,7 +11,7 @@ authors.workspace = true
 [dependencies]
 kestrel-core.workspace = true
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "webpki-roots", "rustls-no-provider", "gzip", "json", "http2", "charset", "socks"] }
-tokio = { version = "1", default-features = false, features = ["rt", "time", "sync", "net"] }
+tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-thread", "time", "sync", "net"] }
 serde.workspace = true
 serde_json.workspace = true
 tracing = { version = "0.1", default-features = false, features = ["std"] }
