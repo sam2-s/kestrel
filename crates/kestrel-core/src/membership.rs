@@ -33,7 +33,7 @@ use crate::{
     wire::{MAX_SKEW_EPOCHS, Post},
 };
 
-use super::invite::ParsedInvite;
+use super::invite::{Invite, ParsedInvite};
 
 /// The largest number of member records one welcome can name.
 ///
@@ -166,9 +166,10 @@ pub enum AssembleError {
 pub fn build_member_record(
     inviter: &Identity,
     member: &crate::roster::Member,
-    joiner: &Identity,
+    joiner: (&str, &[u8]),
     invite_channel: &str,
     generation: i64,
+    ts: i64,
 ) -> Option<InviteMsg> {
     let record = MemberRecord {
         alg: member.alg.as_str().to_string(),
@@ -177,18 +178,19 @@ pub fn build_member_record(
         name: member.name.clone(),
     };
 
-    let context = welcome_context_for(inviter.member_id(), joiner.member_id(), generation);
+    let (joiner_id, joiner_epk) = joiner;
+    let context = welcome_context_for(inviter.member_id(), joiner_id, generation);
     let build = |rec: &MemberRecord| -> Option<InviteMsg> {
         let body = serde_json::to_string(rec).ok()?;
         let wrap = rekey::wrap_to(
             inviter,
-            &joiner.epk_bytes(),
+            joiner_epk,
             invite_channel,
-            joiner.member_id(),
+            joiner_id,
             &context,
             body.as_bytes(),
         )?;
-        Some(InviteMsg::Member { v: msg::VERSION, ts: 0, eph: wrap.eph, w: wrap.w })
+        Some(InviteMsg::Member { v: msg::VERSION, ts, eph: wrap.eph, w: wrap.w })
     };
 
     let message = build(&record);
@@ -267,10 +269,277 @@ impl PendingJoin {
     }
 }
 
+/// Why an admission could not be produced.
+///
+/// Returned before anything is sent, so a refusal is a refusal rather than a
+/// half-admission that has to be undone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdmitError {
+    /// The message on the rendezvous channel was not a join request.
+    NotARequest,
+    /// The invitation has expired.
+    Expired,
+    /// The requester is already a member.
+    AlreadyMember,
+    /// The circle has no room.
+    NoRoom,
+    /// The requester's keys are not decodable, or are not a curve point.
+    Unreadable,
+    /// The ratchet would not give up a chain key for this epoch.
+    Unwritable,
+    /// A record or the welcome would not fit under the message ceiling.
+    TooLarge,
+}
+
+/// Everything admitting one joiner produces.
+///
+/// Two lists rather than one, because the protocol deliberately puts the re-key
+/// where the circle is reading and everything else where the joiner is. Each is
+/// in send order: the relay refuses a timestamp that does not increase for a
+/// member on a channel, so a shuffled list is a list in which half the posts
+/// fail.
+#[derive(Debug, Clone)]
+pub struct Admission {
+    /// Re-keys for the members already in, on the channel that is ending.
+    pub rekeys: Vec<Post>,
+    /// The ack, then the member records, then the welcome, on the rendezvous.
+    ///
+    /// Records before the welcome because the welcome is the commit point: a
+    /// joiner that opens a welcome and then waits for records is waiting for
+    /// something that already arrived, and one that sees the welcome last knows
+    /// its count was complete when it committed.
+    pub rendezvous: Vec<Post>,
+    /// The generation the joiner opens.
+    pub generation: i64,
+    pub opening_epoch: i64,
+    /// The channel the circle moves to.
+    pub channel: String,
+}
+
+/// Admit the requester on a join request, executing [`ADMISSION_PLAN`].
+///
+/// `fresh_entropy` is mixed into the new generation's seed alongside this
+/// device's chain key, so neither a relay that watched the mix nor a device that
+/// only holds the chain key can derive the generation that follows.
+///
+/// The invitation is *not* burnt here: burning is a caller decision, because
+/// only the caller knows whether the welcome went out, and a link destroyed
+/// before its welcome leaves a device with nowhere to read one.
+pub fn admit(
+    circle: &mut crate::session::Circle,
+    invite: &Invite,
+    request: (&Post, &InviteMsg),
+    now: i64,
+    fresh_entropy: &[u8; rekey::FRESH_ENTROPY_LEN],
+) -> Result<Admission, AdmitError> {
+    let (post, body) = request;
+    let InviteMsg::Join { pk, epk, .. } = body else {
+        return Err(AdmitError::NotARequest);
+    };
+    if invite.is_expired(now) {
+        return Err(AdmitError::Expired);
+    }
+
+    // The keys in the body have to be the keys the request was signed with.
+    // Screening already checked this, but admitting is the moment the keys are
+    // about to be wrapped to, and a mismatch there hands the inviter a safety
+    // number for a device that is not the one asking.
+    let joiner_epk = b64::decode(epk).ok_or(AdmitError::Unreadable)?;
+    if !crate::identity::valid_ecdh_key(&joiner_epk) {
+        return Err(AdmitError::Unreadable);
+    }
+    let posted_pk = post.pk_bytes().ok_or(AdmitError::Unreadable)?;
+    let posted_epk = post.epk_bytes().ok_or(AdmitError::Unreadable)?;
+    if !crate::roster::same_key(pk, &b64::encode(&posted_pk))
+        || b64::encode(&posted_epk) != *epk
+    {
+        return Err(AdmitError::Unreadable);
+    }
+
+    let joiner_id = post.m.clone();
+    if circle.roster().contains(&joiner_id) {
+        return Err(AdmitError::AlreadyMember);
+    }
+    if circle.roster().len() >= crate::roster::LOCAL_CAP {
+        return Err(AdmitError::NoRoom);
+    }
+
+    let rotation = circle
+        .rotate(Some((&joiner_id, &joiner_epk)), &[], fresh_entropy, now)
+        .ok_or(AdmitError::Unwritable)?;
+
+    // The rendezvous side. One clock for the whole admission, so the ack, the
+    // records and the welcome are strictly increasing without depending on how
+    // many re-keys happened to be sealed first.
+    let rendezvous_channel = invite.channel();
+    let rendezvous_key = invite.key();
+    let inviter = circle.identity();
+    let mut ts = now;
+    let mut rendezvous = Vec::new();
+
+    let push = |step: InviteMsg, ts: i64| -> Result<Post, AdmitError> {
+        let json = serde_json::to_string(&step).map_err(|_| AdmitError::TooLarge)?;
+        seal::build_post(
+            inviter,
+            &rendezvous_channel,
+            &rendezvous_key,
+            crate::wire::epoch_at(ts),
+            ts,
+            &json,
+        )
+        .map_err(|_| AdmitError::TooLarge)
+    };
+
+    // 1. Claim the slot before anything else can take it.
+    rendezvous.push(push(
+        InviteMsg::Ack { v: msg::VERSION, ts, to: inviter.member_id().to_string() },
+        ts,
+    )?);
+
+    // 3. One record per member other than the joiner. The roster is the one the
+    //    rotation left, which does not know the joiner yet and so cannot include
+    //    a record for them.
+    for member in circle.roster().iter() {
+        ts += 1;
+        let record = build_member_record(
+            inviter,
+            member,
+            (&joiner_id, &joiner_epk),
+            &rendezvous_channel,
+            rotation.generation,
+            ts,
+        )
+        .ok_or(AdmitError::TooLarge)?;
+        rendezvous.push(push(record, ts)?);
+    }
+
+    // 4. The commit point, last.
+    ts += 1;
+    let context = rekey::welcome_context(
+        inviter.member_id(),
+        rotation.generation,
+        rotation.opening_epoch,
+    );
+    let wrap = rekey::wrap_to(
+        inviter,
+        &joiner_epk,
+        &rendezvous_channel,
+        &joiner_id,
+        &context,
+        &rotation.seed,
+    )
+    .ok_or(AdmitError::TooLarge)?;
+    let count = circle.roster().len() as i64;
+    let welcome = InviteMsg::Welcome {
+        v: msg::VERSION,
+        ts,
+        g: rotation.generation,
+        e0: rotation.opening_epoch,
+        n: count,
+        eph: wrap.eph,
+        w: wrap.w,
+    };
+    rendezvous.push(push(welcome, ts)?);
+
+    Ok(Admission {
+        rekeys: rotation.rekeys,
+        rendezvous,
+        generation: rotation.generation,
+        opening_epoch: rotation.opening_epoch,
+        channel: rotation.channel,
+    })
+}
+
+/// Why a join could not be completed from what arrived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JoinError {
+    /// No welcome from this link's inviter has arrived yet.
+    Waiting,
+    /// A welcome arrived, but the records that go with it have not all landed.
+    Incomplete { have: i64, need: i64 },
+    /// The circle could not be built from what arrived.
+    Unusable,
+}
+
+/// Complete a join from every message that has arrived on the rendezvous.
+///
+/// Takes the whole feed rather than a message that looks like a welcome,
+/// because which one is the welcome is not knowable before the inviter's
+/// commitment in it has been checked — and checking it is what stops anyone who
+/// merely saw the link from owning the joining device.
+///
+/// `welcome_seen_at` is when the caller first saw a welcome: the grace period
+/// for the records runs from there, not from this call, or a joiner that polls
+/// every few seconds would wait forever.
+pub fn finish_join(
+    join: &PendingJoin,
+    invite: &ParsedInvite,
+    arrived: &[(Post, InviteMsg)],
+    now: i64,
+    welcome_seen_at: i64,
+) -> Result<crate::session::Circle, JoinError> {
+    // The welcome first: its count is what the records are measured against, and
+    // its commitment is what makes the rest of them believable.
+    let (welcome_post, welcome_body) = arrived
+        .iter()
+        .find(|(_, body)| matches!(body, InviteMsg::Welcome { .. }))
+        .ok_or(JoinError::Waiting)?;
+    let welcome =
+        verify_and_open_welcome(&join.identity, welcome_post, welcome_body, invite, now)
+            .ok_or(JoinError::Waiting)?;
+
+    // Every record for this welcome, from the inviter it names, in whatever
+    // order they landed.
+    let mut records = Vec::new();
+    for (post, body) in arrived {
+        if !matches!(body, InviteMsg::Member { .. }) {
+            continue;
+        }
+        if let Some(record) =
+            open_member_record(&join.identity, &welcome.from, post, body, &welcome, invite)
+        {
+            records.push(record);
+        }
+    }
+    // A short delivery is a refusal rather than a partial join: a circle that
+    // cannot name one of its own members is worse than one never joined.
+    let records =
+        assemble(&welcome, &records, now, welcome_seen_at).map_err(|e| match e {
+            AssembleError::Waiting => JoinError::Waiting,
+            AssembleError::Incomplete { have, need } => {
+                JoinError::Incomplete { have, need }
+            }
+        })?;
+
+    let inviter_pk = b64::encode(&welcome_post.pk_bytes().ok_or(JoinError::Unusable)?);
+    let inviter_epk = b64::encode(&welcome_post.epk_bytes().ok_or(JoinError::Unusable)?);
+    let roster = roster_after_join(
+        &join.identity,
+        (&welcome.from, &inviter_pk, &inviter_epk),
+        &records,
+        now,
+    )
+    .ok_or(JoinError::Unusable)?;
+
+    let channel = kdf::channel_id(&kdf::anchor(&welcome.seed));
+    let circle = crate::session::Circle::join(
+        join.identity.clone(),
+        &welcome.seed,
+        channel,
+        welcome.generation,
+        welcome.opening_epoch,
+        roster,
+        now,
+    );
+    Ok(circle)
+}
+
 /// Verify a welcome using the joining device's own keys.
 ///
-/// This is the real entry point; [`read_welcome`] is the door check and this is
-/// the complete one, including opening the wrap to the joiner.
+/// The complete check, including opening the wrap to the joiner. Only a welcome
+/// whose sender hashes to the link's commitment reaches the caller with a seed,
+/// which is what stops someone who merely saw the link from owning the joining
+/// device.
 pub fn verify_and_open_welcome(
     joiner: &Identity,
     post: &Post,
@@ -317,7 +586,7 @@ pub fn verify_and_open_welcome(
 /// Open a member record that arrived alongside a welcome.
 pub fn open_member_record(
     joiner: &Identity,
-    inviter: &Identity,
+    inviter_id: &str,
     post: &Post,
     body: &InviteMsg,
     welcome: &VerifiedWelcome,
@@ -327,12 +596,11 @@ pub fn open_member_record(
         return None;
     };
     // A record is only believed from the inviter the link committed to.
-    if post.m != welcome.from {
+    if post.m != welcome.from || post.m != inviter_id {
         return None;
     }
     let channel = kdf::invite_channel(&invite.secret);
-    let context =
-        welcome_context_for(inviter.member_id(), joiner.member_id(), welcome.generation);
+    let context = welcome_context_for(inviter_id, joiner.member_id(), welcome.generation);
     let plain = rekey::open_wrap(joiner, eph, w, &channel, &context)?;
     serde_json::from_slice(&plain).ok()
 }
@@ -343,10 +611,11 @@ pub fn open_member_record(
 /// itself.
 pub fn roster_after_join(
     joiner: &Identity,
-    inviter: &Identity,
+    inviter: (&str, &str, &str),
     records: &[MemberRecord],
     now: i64,
 ) -> Option<Roster> {
+    let (inviter_id, inviter_pk, inviter_epk) = inviter;
     let mut roster = Roster::new();
     let cap = crate::roster::LOCAL_CAP;
     for r in records {
@@ -354,8 +623,10 @@ pub fn roster_after_join(
         roster.admit(&id, &r.pk, &r.epk, now, cap).map_err(|_| ()).ok()?;
     }
     // The inviter is in the records, but add them explicitly so a welcome that
-    // omitted them still leaves a usable circle rather than an empty one.
-    roster.admit(inviter.member_id(), &inviter.pk_b64(), &inviter.epk_b64(), now, cap).ok();
+    // omitted them still leaves a usable circle rather than an empty one. Only
+    // their public keys are available here: a joiner never holds the inviter's
+    // identity, and would not use it if they did.
+    roster.admit(inviter_id, inviter_pk, inviter_epk, now, cap).ok();
     let _ = joiner;
     Some(roster)
 }
@@ -726,9 +997,15 @@ mod tests {
         roster.set_name(inviter.member_id(), "Ana");
 
         let member = roster.get(inviter.member_id()).unwrap().clone();
-        let record_msg =
-            build_member_record(&inviter, &member, &join.identity, &invite.channel(), 1)
-                .expect("a record builds");
+        let record_msg = build_member_record(
+            &inviter,
+            &member,
+            (join.identity.member_id(), &join.identity.epk_bytes()),
+            &invite.channel(),
+            1,
+            now(),
+        )
+        .expect("a record builds");
 
         // Post it the way the inviter would, then open it as the joiner.
         let channel = kdf::invite_channel(&invite.secret);
@@ -752,7 +1029,7 @@ mod tests {
         };
         let record = open_member_record(
             &join.identity,
-            &inviter,
+            inviter.member_id(),
             &post,
             &record_msg,
             &welcome,
@@ -762,7 +1039,13 @@ mod tests {
         assert_eq!(record.pk, inviter.pk_b64());
         assert_eq!(record.name, "Ana");
 
-        let joined = roster_after_join(&join.identity, &inviter, &[record], now()).unwrap();
+        let joined = roster_after_join(
+            &join.identity,
+            (inviter.member_id(), &inviter.pk_b64(), &inviter.epk_b64()),
+            &[record],
+            now(),
+        )
+        .unwrap();
         assert!(joined.contains(inviter.member_id()));
     }
 
@@ -780,9 +1063,15 @@ mod tests {
             )
             .unwrap();
         let member = roster.get(inviter.member_id()).unwrap().clone();
-        let record_msg =
-            build_member_record(&inviter, &member, &join.identity, &invite.channel(), 1)
-                .unwrap();
+        let record_msg = build_member_record(
+            &inviter,
+            &member,
+            (join.identity.member_id(), &join.identity.epk_bytes()),
+            &invite.channel(),
+            1,
+            now(),
+        )
+        .unwrap();
 
         let welcome = VerifiedWelcome {
             generation: 1,
@@ -795,7 +1084,7 @@ mod tests {
         assert!(
             open_member_record(
                 &join.identity,
-                &inviter,
+                inviter.member_id(),
                 &post_for(&inviter, &invite, &record_msg),
                 &record_msg,
                 &welcome,
@@ -805,15 +1094,19 @@ mod tests {
         );
     }
 
+    /// A post carrying `body`, stamped the way `Circle::seal` stamps one: the
+    /// header's timestamp and the body's are the same number, which is the only
+    /// way a receiver's `inner_timestamp_matches` check passes.
     fn post_for(inviter: &Identity, invite: &ParsedInvite, body: &InviteMsg) -> Post {
         let channel = kdf::invite_channel(&invite.secret);
         let json = serde_json::to_string(body).unwrap();
+        let ts = body.timestamp();
         seal::build_post(
             inviter,
             &channel,
             &seal::ContentKey::new(kdf::invite_key(&invite.secret)),
-            crate::wire::epoch_at(now()),
-            now(),
+            crate::wire::epoch_at(ts),
+            ts,
             &json,
         )
         .unwrap()
@@ -834,9 +1127,15 @@ mod tests {
             .unwrap();
         roster.set_name(inviter.member_id(), &"n".repeat(200));
         let member = roster.get(inviter.member_id()).unwrap().clone();
-        let m =
-            build_member_record(&inviter, &member, &join.identity, &invite.channel(), 1)
-                .expect("the record still builds without the name");
+        let m = build_member_record(
+            &inviter,
+            &member,
+            (join.identity.member_id(), &join.identity.epk_bytes()),
+            &invite.channel(),
+            1,
+            now(),
+        )
+        .expect("the record still builds without the name");
         let json = serde_json::to_string(&m).unwrap();
         assert!(
             json.len() <= crate::wire::PAD_LEN,

@@ -183,6 +183,23 @@ pub struct Circle {
     sent_epoch: i64,
 }
 
+/// What a rotation produced, before the rotator joins its own new generation.
+///
+/// Returned rather than posted, because where each part goes is the caller's
+/// decision and getting it wrong is silent: a re-key on the rendezvous channel
+/// is a message nobody will ever read.
+#[derive(Debug, Clone)]
+pub struct Rotation {
+    /// The re-keys for everyone still in, sealed to the channel that is ending.
+    pub rekeys: Vec<Post>,
+    /// The new generation's seed. For the welcome; the rotator already holds it.
+    pub seed: [u8; 32],
+    pub generation: i64,
+    pub opening_epoch: i64,
+    /// The channel the circle moves to.
+    pub channel: String,
+}
+
 impl Circle {
     /// A brand new circle, from a fresh seed.
     pub fn create(identity: Identity, seed: &[u8; 32], now: i64) -> Self {
@@ -638,22 +655,44 @@ impl Circle {
 
         // A re-key is a fresh generation, and the previous one's history is
         // unreadable from here on. That is the point of it.
+        self.adopt(*g, *e0, &seed, rm, now);
+        Ok(self.generation)
+    }
+
+    /// Move onto a generation whose seed this device already holds.
+    ///
+    /// The two halves of a re-key are the same move from two directions: a
+    /// recipient opens a wrap to get the seed, and the rotator derives it from its
+    /// own chain key. Both end here, so neither can drift from the other — the
+    /// failure mode being a rotator sitting on the channel everyone else has left.
+    fn adopt(
+        &mut self,
+        generation: i64,
+        opening_epoch: i64,
+        seed: &[u8; 32],
+        removed: &[String],
+        now: i64,
+    ) {
         let ratchet = Ratchet::restore(
-            &Snapshot { e0: *e0, ck0: kdf::chain0(&seed), window: self.ratchet.window() },
+            &Snapshot {
+                e0: opening_epoch,
+                ck0: kdf::chain0(seed),
+                window: self.ratchet.window(),
+            },
             now,
         );
         self.ratchet = ratchet;
-        self.channel = kdf::channel_id(&kdf::anchor(&seed));
-        self.generation = *g;
-        self.opened_epoch = *e0;
+        self.channel = kdf::channel_id(&kdf::anchor(seed));
+        self.generation = generation;
+        self.opened_epoch = opening_epoch;
         self.generation_at = now;
-        self.sent_epoch = self.sent_epoch.min(*e0);
+        self.sent_epoch = self.sent_epoch.min(opening_epoch);
         self.last_sent_ts = 0;
         self.roster_mismatch_since = None;
 
         // Members removed in this generation, and anyone not in the new founding
         // roster, stop being drawn.
-        for removed in rm {
+        for removed in removed {
             if kdf::is_member_id(removed) {
                 self.roster.remove(removed);
                 self.high_water.remove(removed);
@@ -666,7 +705,73 @@ impl Circle {
         // in it by construction, and this device is too, because it did not
         // receive a wrap unless it was one of the recipients.
         self.members.retain(|id, _| self.roster.contains(id));
-        Ok(self.generation)
+    }
+
+    /// End this generation and start the next one, as the device that is rotating.
+    ///
+    /// The seed comes from this device's own chain key, so unlike a recipient the
+    /// rotator does not wrap a seed to itself. It does wrap one to everyone else
+    /// still in — including a newcomer being admitted, who cannot read it and gets
+    /// the seed in the welcome instead, which is exactly what the protocol's
+    /// published session expects.
+    ///
+    /// `fresh_entropy` is mixed with the chain key, so neither a relay that
+    /// observes the mix nor a device that only holds the chain key can compute the
+    /// next generation on its own.
+    ///
+    /// Returns `None` when the ratchet will not give up a chain key for this epoch
+    /// — a destroyed chain, or a clock moved backwards past the generation's start.
+    pub fn rotate(
+        &mut self,
+        admitted: Option<(&str, &[u8])>,
+        removed: &[String],
+        fresh_entropy: &[u8; crate::rekey::FRESH_ENTROPY_LEN],
+        now: i64,
+    ) -> Option<Rotation> {
+        let mix = wire::epoch_at(now);
+        let ck = self.ratchet.chain_key_at(mix, now)?;
+        let seed = crate::rekey::derive_next_seed(&ck, fresh_entropy);
+        let generation = self.generation + 1;
+        let opening_epoch = mix;
+        let admitted_id = admitted.map(|(id, _)| id);
+
+        // The hash covers the roster this generation opens with: everyone still in,
+        // plus the newcomer. Not the current roster, which does not know them yet.
+        let rh = kdf::roster_hash(&self.next_roster(admitted_id, removed));
+        let old_channel = self.channel.clone();
+
+        let mut rekeys = Vec::new();
+        for id in self.rekey_recipients(admitted_id) {
+            let epk: Vec<u8> = match admitted {
+                Some((aid, epk)) if aid == id => epk.to_vec(),
+                _ => b64::decode(&self.roster.get(&id)?.epk)?,
+            };
+            let body = crate::rekey::build_rekey(
+                &self.identity,
+                &epk,
+                &id,
+                &old_channel,
+                "",
+                generation,
+                opening_epoch,
+                mix,
+                0,
+                &rh,
+                removed,
+                fresh_entropy,
+                &seed,
+            )?;
+            rekeys.push(self.seal(&body, now)?);
+        }
+
+        self.adopt(generation, opening_epoch, &seed, removed, now);
+        Some(Rotation {
+            rekeys,
+            seed,
+            generation,
+            opening_epoch,
+            channel: self.channel.clone(),
+        })
     }
 
     /// Mark a member as confirmed in person.
