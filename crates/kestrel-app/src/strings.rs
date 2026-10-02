@@ -165,6 +165,16 @@ const EN: &[(&str, &str)] = &[
     ("settings.tor", "Use Tor"),
     ("settings.tor_hint", "Slower, and harder to trace. Not bundled yet."),
     ("settings.app_lock", "App lock"),
+    ("settings.lock_on", "On"),
+    ("settings.lock_off", "Off"),
+    ("settings.lock_set", "Set a passcode"),
+    ("settings.lock_change", "Change passcode"),
+    ("settings.lock_current", "Current passcode"),
+    ("settings.lock_new", "New passcode"),
+    ("settings.lock_leave_off", "Leave it empty to turn the lock off."),
+    ("settings.lock_save", "Save"),
+    ("settings.lock_done", "App lock is on."),
+    ("settings.lock_removed", "App lock is off."),
     ("settings.passcode", "Passcode"),
     ("settings.passcode_hint", "At least six characters"),
     ("settings.wipe", "Erase everything"),
@@ -244,6 +254,7 @@ const EN: &[(&str, &str)] = &[
     ("lock.title", "Locked"),
     ("lock.enter", "Enter your passcode"),
     ("lock.wrong", "That is not the passcode."),
+    ("lock.broken", "That passcode is right, but the circle on this phone will not open."),
     ("lock.wiped", "Nothing here"),
     (
         "lock.wiped_body",
@@ -304,6 +315,16 @@ const ES: &[(&str, &str)] = &[
     ("settings.tor", "Usar Tor"),
     ("settings.tor_hint", "Más lento y más difícil de rastrear. Aún no incluido."),
     ("settings.app_lock", "Bloqueo de la app"),
+    ("settings.lock_on", "Activado"),
+    ("settings.lock_off", "Desactivado"),
+    ("settings.lock_set", "Crear un código de acceso"),
+    ("settings.lock_change", "Cambiar el código de acceso"),
+    ("settings.lock_current", "Código de acceso actual"),
+    ("settings.lock_new", "Nuevo código de acceso"),
+    ("settings.lock_leave_off", "Déjalo vacío para desactivar el bloqueo."),
+    ("settings.lock_save", "Guardar"),
+    ("settings.lock_done", "El bloqueo de la app está activado."),
+    ("settings.lock_removed", "El bloqueo de la app está desactivado."),
     ("settings.passcode", "Código de acceso"),
     ("settings.passcode_hint", "Al menos seis caracteres"),
     ("settings.wipe", "Borrarlo todo"),
@@ -337,6 +358,7 @@ const ES: &[(&str, &str)] = &[
     ("lock.title", "Bloqueado"),
     ("lock.enter", "Escribe tu código de acceso"),
     ("lock.wrong", "Ese no es el código."),
+    ("lock.broken", "El código es correcto, pero el círculo de este teléfono no se abre."),
     ("lock.wiped", "No hay nada aquí"),
     (
         "lock.wiped_body",
@@ -409,6 +431,18 @@ const DE: &[(&str, &str)] = &[
     ("settings.light", "Hell"),
     ("settings.off_grid", "Keine Karte"),
     ("settings.tor", "Tor verwenden"),
+    ("settings.app_lock", "App-Sperre"),
+    ("settings.passcode_hint", "Mindestens sechs Zeichen"),
+    ("settings.lock_on", "An"),
+    ("settings.lock_off", "Aus"),
+    ("settings.lock_set", "Passcode festlegen"),
+    ("settings.lock_change", "Passcode ändern"),
+    ("settings.lock_current", "Aktueller Passcode"),
+    ("settings.lock_new", "Neuer Passcode"),
+    ("settings.lock_leave_off", "Leer lassen, um die Sperre auszuschalten."),
+    ("settings.lock_save", "Speichern"),
+    ("settings.lock_done", "Die App-Sperre ist aktiv."),
+    ("settings.lock_removed", "Die App-Sperre ist aus."),
     ("settings.passcode", "Passcode"),
     ("settings.wipe", "Alles löschen"),
     ("settings.wipe_hint", "Löscht die Schlüssel. Nichts Geteiltes ist wiederherstellbar."),
@@ -426,6 +460,10 @@ const DE: &[(&str, &str)] = &[
     ("invite.expired", "Abgelaufen"),
     ("lock.title", "Gesperrt"),
     ("lock.wrong", "Das ist nicht der Passcode."),
+    (
+        "lock.broken",
+        "Der Passcode stimmt, aber der Kreis auf diesem Telefon öffnet sich nicht.",
+    ),
     ("lock.wiped", "Nichts hier"),
     (
         "lock.wiped_body",
@@ -530,6 +568,38 @@ mod tests {
         }
         assert_eq!(Language::Spanish.endonym(), "Español");
         assert_eq!(Language::Japanese.tag(), "ja");
+    }
+
+    #[test]
+    fn the_app_lock_says_something_in_every_language() {
+        // A missing key renders as the key itself, which is a button reading
+        // "settings.lock_save". Invisible in English — English is the table
+        // everything falls back to — and wrong in every language that is not.
+        for language in Language::ALL {
+            for key in [
+                "settings.app_lock",
+                "settings.lock_on",
+                "settings.lock_off",
+                "settings.lock_set",
+                "settings.lock_change",
+                "settings.lock_current",
+                "settings.lock_new",
+                "settings.lock_leave_off",
+                "settings.lock_save",
+                "settings.lock_done",
+                "settings.lock_removed",
+                "settings.passcode",
+                "settings.passcode_hint",
+                "settings.close",
+                "lock.title",
+                "lock.enter",
+                "lock.wrong",
+                "lock.broken",
+            ] {
+                let text = get(language, key);
+                assert!(!text.is_empty() && text != key, "{language:?} has no {key}");
+            }
+        }
     }
 
     #[test]

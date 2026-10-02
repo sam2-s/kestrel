@@ -688,10 +688,8 @@ fn settings(ui: &mut egui::Ui, ctx: &Ctx, language: Language) {
 
     permissions_block(ui, ctx, language);
 
-    ui.separator();
-    if ui.button(strings::get(language, "settings.app_lock")).clicked() {
-        tell(ctx, "The app lock is not wired up yet.");
-    }
+    app_lock_block(ui, ctx, language);
+
     ui.label(strings::get(language, "settings.version"));
 
     ui.add_space(12.0);
@@ -731,13 +729,160 @@ fn locked(ui: &mut egui::Ui, ctx: &Ctx, language: Language) {
         state.typing = passcode.clone();
     }
     if ui.button(strings::get(language, "settings.passcode")).clicked() {
-        match store::check_lock(
-            &passcode,
-            &store::Lock { salt: String::new(), hash: String::new(), rounds: 1 },
-        ) {
-            true => go(ctx, Screen::Map),
-            false => tell(ctx, strings::get(language, "lock.wrong")),
+        unlock(ctx, language, &passcode);
+    }
+}
+
+/// Let the phone open, or say why not.
+///
+/// The verifier is only a verifier. It proves the person knows the passcode;
+/// it does not prove the seed underneath it still opens, and a device that
+/// accepts a correct passcode and then shows an empty map is worse than one
+/// that refuses outright.
+fn unlock(ctx: &Ctx, language: Language, passcode: &str) {
+    // Without a lock file there is nothing to check against — the file went
+    // away between the launch that showed this screen and the tap that
+    // answered it — so the passcode is not asked for at all.
+    let lock = store::load_lock();
+    if let Some(lock) = &lock
+        && !store::check_lock(passcode, lock)
+    {
+        tell(ctx, strings::get(language, "lock.wrong"));
+        return;
+    }
+    // Whether there is a verifier or not, the seed is what has to open. A lock
+    // file that exists but will not parse still leaves a sealed seed behind, and
+    // asking for the passcode there is the only way it ever comes back.
+    let code = store::is_locked().then_some(passcode);
+    let Some(circle) = logic::restore_circle(code) else {
+        tell(ctx, strings::get(language, "lock.broken"));
+        return;
+    };
+    let channel = circle.channel().to_string();
+    if let Ok(mut circles) = ctx.shared.circles.lock() {
+        *circles = vec![circle];
+    }
+    if let Some(engine) = &ctx.engine {
+        engine.attach(&channel);
+        // The invitation the user already showed somebody, back on the wire now
+        // that this phone is theirs again.
+        if let Some(received) = handshake::restore(&ctx.shared, crate::state::now_ms()) {
+            handshake::apply(engine, &received);
         }
+    }
+    go(ctx, Screen::Map);
+}
+
+// -------------------------------------------------------------- app lock
+
+/// The app-lock row of settings, and the form behind it.
+///
+/// Inline rather than its own screen: it is three controls, and a screen for
+/// three controls is a screen a person has to find their way back from.
+fn app_lock_block(ui: &mut egui::Ui, ctx: &Ctx, language: Language) {
+    ui.separator();
+    ui.label(RichText::new(strings::get(language, "settings.app_lock")).strong());
+
+    let locked = store::is_locked();
+    ui.label(
+        RichText::new(strings::get(
+            language,
+            if locked { "settings.lock_on" } else { "settings.lock_off" },
+        ))
+        .small()
+        .weak(),
+    );
+
+    let open = ctx.shared.state.lock().map(|s| s.setting_lock).unwrap_or(false);
+    if !open {
+        // Only worth offering once there is something to seal. On a first run
+        // there is no seed, so a passcode would lock an empty device.
+        if store::has_circle() {
+            let label = if locked { "settings.lock_change" } else { "settings.lock_set" };
+            if ui.button(strings::get(language, label)).clicked()
+                && let Ok(mut state) = ctx.shared.state.lock()
+            {
+                state.setting_lock = true;
+                state.typing.clear();
+                state.new_passcode.clear();
+            }
+        }
+        return;
+    }
+
+    if locked {
+        ui.label(strings::get(language, "settings.lock_current"));
+        let mut current =
+            ctx.shared.state.lock().map(|s| s.typing.clone()).unwrap_or_default();
+        ui.add(egui::TextEdit::singleline(&mut current).password(true).hint_text("••••••"));
+        if let Ok(mut state) = ctx.shared.state.lock() {
+            state.typing = current;
+        }
+    }
+
+    ui.label(strings::get(language, "settings.lock_new"));
+    let mut new =
+        ctx.shared.state.lock().map(|s| s.new_passcode.clone()).unwrap_or_default();
+    ui.add(egui::TextEdit::singleline(&mut new).password(true).hint_text("••••••"));
+    if let Ok(mut state) = ctx.shared.state.lock() {
+        state.new_passcode = new.clone();
+    }
+    if locked {
+        ui.label(
+            RichText::new(strings::get(language, "settings.lock_leave_off")).small().weak(),
+        );
+    } else {
+        ui.label(
+            RichText::new(strings::get(language, "settings.passcode_hint")).small().weak(),
+        );
+    }
+
+    ui.horizontal(|ui| {
+        // Saving with nothing entered means "turn it off", which is a decision
+        // only a device that is already locked can be making.
+        let usable = locked || !new.is_empty();
+        if ui
+            .add_enabled(
+                usable,
+                egui::Button::new(strings::get(language, "settings.lock_save")),
+            )
+            .clicked()
+        {
+            save_app_lock(ctx, language);
+        }
+        if ui.button(strings::get(language, "settings.close")).clicked() {
+            close_app_lock(ctx);
+        }
+    });
+}
+
+/// Apply the passcode change, or explain why not.
+fn save_app_lock(ctx: &Ctx, language: Language) {
+    let (current, new) = ctx
+        .shared
+        .state
+        .lock()
+        .map(|s| (s.typing.clone(), s.new_passcode.clone()))
+        .unwrap_or_default();
+    let current = store::is_locked().then_some(current.as_str());
+    let new = (!new.is_empty()).then_some(new.as_str());
+
+    match logic::set_lock(current, new) {
+        Ok(()) => {
+            let key =
+                if new.is_none() { "settings.lock_removed" } else { "settings.lock_done" };
+            tell(ctx, strings::get(language, key));
+            close_app_lock(ctx);
+        }
+        Err(e) => tell(ctx, e),
+    }
+}
+
+fn close_app_lock(ctx: &Ctx) {
+    if let Ok(mut state) = ctx.shared.state.lock() {
+        state.setting_lock = false;
+        state.typing.clear();
+        state.new_passcode.clear();
     }
 }
 
@@ -753,6 +898,12 @@ fn wiped(ui: &mut egui::Ui, ctx: &Ctx, language: Language) {
 
 fn go(ctx: &Ctx, screen: Screen) {
     if let Ok(mut state) = ctx.shared.state.lock() {
+        // Whatever was typed belongs to the screen being left. A passcode left
+        // sitting in the state is one that shows up in a field nobody is
+        // looking at any more.
+        state.typing.clear();
+        state.new_passcode.clear();
+        state.setting_lock = false;
         state.go(screen);
     }
 }

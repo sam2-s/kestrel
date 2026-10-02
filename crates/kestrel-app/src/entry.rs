@@ -57,7 +57,12 @@ pub fn android_main(app: AndroidApp) {
 
     // Restore the circle before the first frame, so the app opens on the map rather than
     // on a welcome screen the user dismissed yesterday.
+    //
+    // Not on a locked device. The seed is sealed, so asking for it with no
+    // passcode would answer "no circle" about one that is right there — and the
+    // lock screen is the screen that must show nothing about it.
     let settings = store::load_settings();
+    let locked = store::is_locked();
     let channel = match logic::restore_circle(None) {
         Some(circle) => {
             let channel = circle.channel().to_string();
@@ -77,9 +82,7 @@ pub fn android_main(app: AndroidApp) {
         if let Some(camera) = store::load_camera() {
             state.camera = map::Camera::new(camera.lat, camera.lon, camera.zoom);
         }
-        if channel.is_some() {
-            state.go(Screen::Map);
-        }
+        state.go(crate::state::launch_screen(locked, channel.is_some()));
     }
 
     // The engine, pointed at whatever circle was restored. A relay that will not
@@ -92,7 +95,11 @@ pub fn android_main(app: AndroidApp) {
             // An invitation from the last run goes back on the wire too. The code
             // the user already sent somebody has to keep answering, and re-minting
             // here would leave that QR pointing at a rendezvous nobody reads.
-            if let Some(received) = crate::handshake::restore(&shared, state::now_ms()) {
+            // Not while locked: a device that has not been unlocked is not
+            // listening for anybody, and saying so by being silent is the point.
+            if !locked
+                && let Some(received) = crate::handshake::restore(&shared, state::now_ms())
+            {
                 crate::handshake::apply(&engine, &received);
             }
             Some(engine)

@@ -139,8 +139,30 @@ pub fn save_seed(seed: &[u8; 32], passcode: Option<&str>) -> std::io::Result<()>
                 &serde_json::to_vec(&lock).unwrap_or_default(),
             )
         }
-        None => store::write_private(&store::seed_path(), seed),
+        None => {
+            store::write_private(&store::seed_path(), seed)?;
+            // And the verifier with it. A seed left in the clear while
+            // `is_locked()` still says yes is a device that refuses every
+            // passcode and offers no way to turn the lock off.
+            store::clear_lock();
+            Ok(())
+        }
     }
+}
+
+/// Turn the app lock on, change it, or take it off.
+///
+/// `current` is the passcode in force now; `new` is the one being set, or
+/// `None` to leave the seed in the clear. Re-read from disk rather than taken
+/// from the circle in memory, because the thing that has to be re-written is
+/// the file — a lock that changes only in memory is a lock the next launch does
+/// not know about.
+pub fn set_lock(current: Option<&str>, new: Option<&str>) -> Result<(), String> {
+    // A device with no lock stores the seed raw, so `current` is ignored there
+    // and every check below collapses to "the bytes are the seed".
+    let seed = load_seed(current)
+        .ok_or_else(|| "That passcode did not open your circle.".to_string())?;
+    save_seed(&seed, new).map_err(|e| format!("Could not save your settings: {e}"))
 }
 
 /// Read the seed back, with the passcode if there is one.
@@ -669,6 +691,77 @@ mod tests {
             &mut p,
         );
         assert!(sharing_promise(&p).contains("keeps going"));
+    }
+
+    /// Puts back whatever the store held before a test wrote to it.
+    ///
+    /// The seed and lock files are shared with the whole process, so a test that
+    /// writes them must not leave its own behind for the next one to trip over.
+    struct StoreGuard {
+        seed: Option<Vec<u8>>,
+        lock: Option<Vec<u8>>,
+    }
+
+    impl StoreGuard {
+        fn hold() -> Self {
+            Self {
+                seed: store::read(&store::seed_path()),
+                lock: store::read(&store::lock_path()),
+            }
+        }
+    }
+
+    impl Drop for StoreGuard {
+        fn drop(&mut self) {
+            let restore = |held: &Option<Vec<u8>>, path: std::path::PathBuf| match held {
+                Some(bytes) => {
+                    let _ = store::write_private(&path, bytes);
+                }
+                None => {
+                    let _ = std::fs::remove_file(path);
+                }
+            };
+            restore(&self.seed, store::seed_path());
+            restore(&self.lock, store::lock_path());
+        }
+    }
+
+    #[test]
+    fn a_passcode_can_be_turned_on_changed_and_off() {
+        // Written rather than asserted against the seal primitives alone,
+        // because the trap is in the files: a seed left in the clear while the
+        // lock file still exists is a device that refuses every passcode and
+        // offers no way to turn the lock off.
+        let _guard = StoreGuard::hold();
+        let seed = [7u8; 32];
+        store::write_private(&store::seed_path(), &seed).expect("a seed to lock");
+        store::clear_lock();
+
+        assert!(!store::is_locked());
+        assert_eq!(load_seed(None), Some(seed));
+
+        // On.
+        set_lock(None, Some("a good passcode")).expect("a first passcode");
+        assert!(store::is_locked());
+        assert!(store::load_lock().is_some(), "the verifier was written");
+        assert_eq!(load_seed(Some("a good passcode")), Some(seed));
+        assert_eq!(load_seed(None), None, "the seed is sealed now");
+
+        // A wrong passcode changes nothing, rather than leaving half a change.
+        assert!(set_lock(Some("wrong passcode"), Some("another passcode")).is_err());
+        assert_eq!(load_seed(Some("a good passcode")), Some(seed));
+
+        // Changed.
+        set_lock(Some("a good passcode"), Some("another passcode"))
+            .expect("a new passcode");
+        assert_eq!(load_seed(Some("another passcode")), Some(seed));
+        assert_eq!(load_seed(Some("a good passcode")), None, "the old one is gone");
+
+        // Off, which is the case that has to take the verifier with it.
+        set_lock(Some("another passcode"), None).expect("turning it off");
+        assert!(!store::is_locked(), "the verifier went with the seal");
+        assert!(store::load_lock().is_none());
+        assert_eq!(load_seed(None), Some(seed), "the seed is back in the clear");
     }
 
     #[test]

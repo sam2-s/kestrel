@@ -78,6 +78,22 @@ impl Screen {
     }
 }
 
+/// The screen the app opens on.
+///
+/// A locked device opens on the lock rather than the welcome screen: offering
+/// to create a circle to somebody who has not yet proved they own this one is
+/// answering a question nobody asked, and it is the one screen that must not
+/// show anything about the circle behind it.
+pub fn launch_screen(is_locked: bool, has_circle: bool) -> Screen {
+    if is_locked {
+        Screen::Locked
+    } else if has_circle {
+        Screen::Map
+    } else {
+        Screen::Welcome
+    }
+}
+
 impl Default for crate::map::Basemap {
     /// Dark, because this is opened at night by people who are not looking for a
     /// white screen.
@@ -120,8 +136,17 @@ pub struct AppState {
     /// Which share screen is up, if any.
     pub share_sheet: Option<ShareSheet>,
     /// A field the user is typing into. Kept in the state rather than a widget's memory
-    /// so a rotation does not lose it.
+    /// so a rotation does not lose it. On the lock screen this is the passcode being
+    /// entered; in settings it is the one already in force.
     pub typing: String,
+    /// The passcode being set, in settings.
+    ///
+    /// Separate from `typing` because the change form asks for both at once, and
+    /// one field holding two passcodes would mean the box a person is typing
+    /// into changes underneath them.
+    pub new_passcode: String,
+    /// Whether the app-lock form in settings is open.
+    pub setting_lock: bool,
     /// egui's zoom factor for the pinch in progress last frame. Zero when there is not a
     /// pinch, which is what makes the next frame's ratio the whole gesture.
     pub pinch_spread: f32,
@@ -321,6 +346,16 @@ pub fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_locked_device_opens_on_the_lock() {
+        // The one screen that must not be reachable by skipping past it: a
+        // circle waiting behind it is somebody's location history.
+        assert_eq!(launch_screen(true, false), Screen::Locked);
+        assert_eq!(launch_screen(true, true), Screen::Locked);
+        assert_eq!(launch_screen(false, true), Screen::Map);
+        assert_eq!(launch_screen(false, false), Screen::Welcome);
+    }
 
     #[test]
     fn a_zero_fix_is_not_a_position_in_the_gulf_of_guinea() {

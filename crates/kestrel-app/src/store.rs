@@ -144,6 +144,21 @@ pub fn make_lock(passcode: &str) -> Result<Lock, String> {
     Ok(Lock { salt: kestrel_core::b64::encode(&salt), hash: hex(&hash), rounds: ROUNDS })
 }
 
+/// The stored lock, if there is one.
+///
+/// A lock file that will not parse is treated as no lock rather than as a
+/// device that is somehow locked: the alternative is a screen that asks for a
+/// passcode there is nothing to check it against, and no way out.
+pub fn load_lock() -> Option<Lock> {
+    let bytes = read(&lock_path())?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Take the app lock off, leaving the seed in the clear again.
+pub fn clear_lock() {
+    let _ = std::fs::remove_file(lock_path());
+}
+
 /// Check a passcode against a stored lock.
 ///
 /// A comparison that does not stop early. The lengths are equal here, so it does not
