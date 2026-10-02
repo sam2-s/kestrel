@@ -12,6 +12,8 @@
 //! — and even that request is refused until the real inviter comes back and
 //! accepts a safety number they were not expecting.
 
+use serde::{Deserialize, Serialize};
+
 use crate::{b64, identity::Identity, kdf, seal::random_bytes, wire::INVITE_TTL_MS};
 
 /// Length of the invitation secret, and of the secret encoded in a fragment.
@@ -21,7 +23,11 @@ pub const SECRET_LEN: usize = 32;
 pub const COMMITMENT_LEN: usize = 16;
 
 /// An invitation this device minted.
-#[derive(Clone)]
+///
+/// Serializable because a link the user has already shown someone has to
+/// survive the app being closed: re-minting on the next launch would leave the
+/// QR code on the other phone pointing at a rendezvous nobody is listening on.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Invite {
     /// The rendezvous secret. The circle key is not derived from this, so a
     /// leaked invitation does not expose the circle.

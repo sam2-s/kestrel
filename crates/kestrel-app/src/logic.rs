@@ -115,43 +115,6 @@ pub fn is_invite_fragment(text: &str) -> bool {
     invite::parse_fragment(text.trim()).is_some()
 }
 
-/// What a join needs to hand to the relay.
-pub struct JoinPlan {
-    /// The rendezvous channel, derived from the secret so two invitations never meet
-    /// in the same place.
-    pub channel: String,
-    /// The join post, sealed to the rendezvous key.
-    pub post: Option<wire::Post>,
-    /// Why there is no post, if there is none.
-    pub refused: Option<String>,
-}
-
-/// Build the first message of a join.
-///
-/// The seed arrives from the inviter inside the welcome, not before, so this is a
-/// request rather than an answer. It carries no location: a join post that included one
-/// would publish a position to a channel the inviter has not yet proven they own.
-pub fn plan_join(fragment: &str, identity: &Identity, now: i64) -> Option<JoinPlan> {
-    let parsed = invite::parse_fragment(fragment.trim())?;
-    // The channel and the key both come from the core's own derivation, so there is one
-    // implementation of the rendezvous rather than two that have to be kept in step.
-    let (channel, key) = invite::rendezvous(&parsed);
-    // Epoch 0 on the rendezvous: a join is not part of any circle's ratchet, so there
-    // is no chain to advance and nothing to keep.
-    let body = serde_json::to_string(&msg::InviteMsg::Join {
-        v: 1,
-        ts: now,
-        pk: identity.pk_b64(),
-        epk: identity.epk_b64(),
-        name: String::new(),
-    })
-    .ok()?;
-    let post = kestrel_core::seal::build_post(identity, &channel, &key, 0, now, &body).ok();
-    let refused =
-        post.is_none().then(|| "The join request was too large to send.".to_string());
-    Some(JoinPlan { channel, post, refused })
-}
-
 /// Whether a circle's own state is worth saving.
 ///
 /// Every circle is worth saving, actually — but the seed is what makes it the same
@@ -584,23 +547,33 @@ mod tests {
 
     #[test]
     fn a_join_carries_no_location() {
-        // A join post that included a position would publish it to a channel whose owner
-        // has not been proven yet.
+        // The join request is built by `membership::PendingJoin`, and it carries no
+        // position: publishing one to a channel whose owner has not been proven yet
+        // would be the first thing an attacker gets. Checked here because this is where
+        // the app decides what to send.
         let identity = Identity::generate();
-        let plan = plan_join(
-            &Invite::mint(&identity, 1_700_000_000_000, INVITE_TTL_MS).fragment(),
-            &Identity::generate(),
+        let invite = Invite::mint(&identity, 1_700_000_000_000, INVITE_TTL_MS);
+        let parsed =
+            invite::parse_fragment(&invite.fragment()).expect("our own fragment parses");
+        let pending =
+            kestrel_core::membership::PendingJoin::new(&parsed, 1_700_000_000_000);
+        let post = pending.request("Bo", 1_700_000_000_000).expect("a request builds");
+        // The body is the whole message, and it has nowhere to put a coordinate.
+        let opened = kestrel_core::seal::verify_and_open(
+            &post,
+            &parsed.channel(),
+            &parsed.key(),
             1_700_000_000_000,
         )
-        .expect("a mint fragment should plan");
-        assert!(!plan.channel.is_empty());
-        assert!(plan.refused.is_none());
+        .expect("the join request opens on its own rendezvous");
+        let body = opened.body.clone();
+        assert!(body.contains(r#""t":"join""#), "{body}");
+        assert!(!body.contains("lat"), "{body}");
     }
 
     #[test]
     fn a_join_needs_a_fragment_to_work_from() {
-        let identity = Identity::generate();
-        assert!(plan_join("not an invite", &identity, 1).is_none());
+        assert!(invite::parse_fragment("not an invite").is_none());
     }
 
     #[test]

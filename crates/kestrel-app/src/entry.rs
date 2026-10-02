@@ -89,6 +89,12 @@ pub fn android_main(app: AndroidApp) {
         Ok(sink) => {
             let engine = Arc::new(Engine::new(shared.clone(), Arc::new(sink)));
             engine.attach(channel.as_deref().unwrap_or_default());
+            // An invitation from the last run goes back on the wire too. The code
+            // the user already sent somebody has to keep answering, and re-minting
+            // here would leave that QR pointing at a rendezvous nobody reads.
+            if let Some(received) = crate::handshake::restore(&shared, state::now_ms()) {
+                crate::handshake::apply(&engine, &received);
+            }
             Some(engine)
         }
         Err(e) => {

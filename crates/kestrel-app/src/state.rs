@@ -12,7 +12,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::permissions::Permissions;
+use crate::{handshake::Handshake, permissions::Permissions};
 
 /// A position, as the platform reports it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -125,6 +125,12 @@ pub struct AppState {
     /// egui's zoom factor for the pinch in progress last frame. Zero when there is not a
     /// pinch, which is what makes the next frame's ratio the whole gesture.
     pub pinch_spread: f32,
+    /// The join handshake in progress, if any.
+    ///
+    /// Here rather than in the engine because it *is* UI state: the review screen
+    /// exists because of it, and a handshake the screens cannot see would be one
+    /// that changes the screen from a thread nobody can follow.
+    pub handshake: Handshake,
 }
 
 /// The sheet at the bottom of the map.
@@ -252,13 +258,6 @@ impl Shared {
     pub fn channel(&self) -> Option<String> {
         let circles = self.circles.lock().ok()?;
         circles.first().map(|c| c.channel().to_string())
-    }
-
-    /// Mint this device's invitation, holding the circle's lock.
-    pub fn mint_invite(&self, now: i64) -> Option<kestrel_core::invite::Invite> {
-        let circles = self.circles.lock().ok()?;
-        let circle = circles.first()?;
-        Some(crate::logic::mint_invite(circle, now))
     }
 
     /// Run a closure over the active circle, under the lock.

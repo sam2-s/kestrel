@@ -20,7 +20,7 @@ use kestrel_core::{
 use kestrel_net::{Outbox, Relay};
 
 use crate::{
-    logic,
+    handshake, logic,
     permissions::Permissions,
     state::{Fix, Shared},
     store,
@@ -129,6 +129,24 @@ pub struct Engine {
     channel: std::sync::Mutex<String>,
     /// The last fix that was queued, as the baseline for the next movement decision.
     last_queued: std::sync::Mutex<Option<Fix>>,
+    /// The join handshake's own channel, cursor and queue.
+    ///
+    /// Kept apart from the circle's because they are different conversations
+    /// with different keys: a join request posted on the circle's channel would
+    /// be a stranger's post on a channel nobody can open it for, and the relay
+    /// would reject it as a member that does not exist.
+    rendezvous: std::sync::Mutex<Rendezvous>,
+}
+
+/// The handshake half of the engine.
+#[derive(Default)]
+struct Rendezvous {
+    /// Empty when no handshake is running, which is the normal state.
+    channel: String,
+    cursor: i64,
+    outbox: Outbox,
+    /// Whether a send is in flight, so two threads cannot both drain the queue.
+    sending: bool,
 }
 
 impl Engine {
@@ -142,6 +160,7 @@ impl Engine {
             backoff: std::sync::Mutex::new(kestrel_net::Backoff::default()),
             channel: std::sync::Mutex::new(String::new()),
             last_queued: std::sync::Mutex::new(None),
+            rendezvous: std::sync::Mutex::new(Rendezvous::default()),
         }
     }
 
@@ -344,6 +363,122 @@ impl Engine {
     pub fn queued(&self) -> usize {
         self.outbox.lock().map(|o| o.len()).unwrap_or(0)
     }
+
+    /// Whether a circle is attached.
+    ///
+    /// Asked before every circle-side pass. Without it a device with no circle
+    /// — the state on the welcome screen, and the whole of a join — reports
+    /// itself offline every half second for want of anything to send to.
+    pub fn has_channel(&self) -> bool {
+        !self.channel().is_empty()
+    }
+
+    /// Point the engine at a rendezvous channel.
+    ///
+    /// Attaching the same channel twice changes nothing, so a live invitation
+    /// re-shown by the invite button does not throw away whatever is queued
+    /// behind it.
+    pub fn attach_rendezvous(&self, channel: &str) {
+        let Ok(mut slot) = self.rendezvous.lock() else {
+            return;
+        };
+        if slot.channel == channel {
+            return;
+        }
+        slot.channel = channel.to_string();
+        slot.cursor = 0;
+        slot.outbox.clear();
+    }
+
+    /// The rendezvous channel being served, if any.
+    pub fn rendezvous_channel(&self) -> String {
+        self.rendezvous.lock().map(|r| r.channel.clone()).unwrap_or_default()
+    }
+
+    /// How many handshake posts are waiting.
+    pub fn rendezvous_queued(&self) -> usize {
+        self.rendezvous.lock().map(|r| r.outbox.len()).unwrap_or(0)
+    }
+
+    /// Queue a post for the rendezvous channel.
+    pub fn push_rendezvous(&self, post: Post, label: &str, coalescible: bool) {
+        if let Ok(mut slot) = self.rendezvous.lock() {
+            slot.outbox.push(post, label, coalescible);
+        }
+    }
+
+    /// Send what is queued on the rendezvous, oldest first.
+    pub async fn flush_rendezvous(&self) -> Result<usize, String> {
+        let channel = self.rendezvous_channel();
+        {
+            let Ok(mut slot) = self.rendezvous.lock() else {
+                return Err("the engine is unusable".to_string());
+            };
+            if slot.outbox.is_empty() {
+                return Ok(0);
+            }
+            if slot.channel.is_empty() {
+                return Err("no handshake attached".to_string());
+            }
+            if slot.sending {
+                return Ok(0);
+            }
+            slot.sending = true;
+        }
+        let result = self.flush_rendezvous_inner(&channel).await;
+        if let Ok(mut slot) = self.rendezvous.lock() {
+            slot.sending = false;
+        }
+        result
+    }
+
+    async fn flush_rendezvous_inner(&self, channel: &str) -> Result<usize, String> {
+        let mut sent = 0;
+        loop {
+            let front = {
+                let Ok(slot) = self.rendezvous.lock() else {
+                    return Err("the engine is unusable".to_string());
+                };
+                match slot.outbox.peek() {
+                    Some(post) => post.clone(),
+                    None => return Ok(sent),
+                }
+            };
+            if self.sink.send(channel, &front).await.is_err() {
+                // Kept. A join request that did not go out is a person who will
+                // ask again, and the relay has not seen it either way.
+                return Err("could not reach the relay".to_string());
+            }
+            let Ok(mut slot) = self.rendezvous.lock() else {
+                return Err("the engine is unusable".to_string());
+            };
+            slot.outbox.pop();
+            sent += 1;
+        }
+    }
+
+    /// What has arrived on the rendezvous, as raw posts.
+    ///
+    /// Not folded into the circle: these are sealed with the handshake's own
+    /// key, and [`crate::handshake`] is what knows which one that is. The
+    /// cursor still advances, because re-reading a handshake the app has
+    /// already decided about is a request per poll for the life of the app.
+    pub async fn poll_rendezvous(&self) -> Result<Vec<Post>, String> {
+        let (channel, since) = {
+            let Ok(slot) = self.rendezvous.lock() else {
+                return Err("the engine is unusable".to_string());
+            };
+            if slot.channel.is_empty() {
+                return Ok(Vec::new());
+            }
+            (slot.channel.clone(), slot.cursor)
+        };
+        let feed = self.sink.fetch(&channel, since).await?;
+        if let Ok(mut slot) = self.rendezvous.lock() {
+            slot.cursor = feed.now.max(since);
+        }
+        Ok(feed.posts())
+    }
 }
 
 /// Whether this device should be posting at all.
@@ -406,6 +541,12 @@ mod tests {
         fail_fetch: Mutex<bool>,
         /// Every channel this was asked about, in order.
         channels: Mutex<Vec<String>>,
+        /// Every read, as the channel it named and the `since` it asked for.
+        ///
+        /// The cursor is invisible from outside the engine otherwise, and a
+        /// cursor that survives a switch to a different rendezvous would have
+        /// one link reading another link's history.
+        fetched: Mutex<Vec<(String, i64)>>,
     }
 
     impl Fake {
@@ -416,6 +557,7 @@ mod tests {
                 fail_send: Mutex::new(false),
                 fail_fetch: Mutex::new(false),
                 channels: Mutex::new(Vec::new()),
+                fetched: Mutex::new(Vec::new()),
             })
         }
 
@@ -431,6 +573,10 @@ mod tests {
 
         fn channels(&self) -> Vec<String> {
             self.channels.lock().map(|c| c.clone()).unwrap_or_default()
+        }
+
+        fn fetched(&self) -> Vec<(String, i64)> {
+            self.fetched.lock().map(|f| f.clone()).unwrap_or_default()
         }
     }
 
@@ -455,7 +601,7 @@ mod tests {
         fn fetch<'a>(
             &'a self,
             channel: &'a str,
-            _since: i64,
+            since: i64,
         ) -> std::pin::Pin<
             Box<dyn std::future::Future<Output = Result<Feed, String>> + Send + 'a>,
         > {
@@ -464,6 +610,7 @@ mod tests {
                     return Err("offline".to_string());
                 }
                 self.channels.lock().unwrap().push(channel.to_string());
+                self.fetched.lock().unwrap().push((channel.to_string(), since));
                 Ok(self.feed.lock().unwrap().clone())
             })
         }
@@ -963,6 +1110,169 @@ mod tests {
         assert!(!engine.offer_position());
         assert!(block_on(async { engine.flush().await }).is_err());
     }
+
+    #[test]
+    fn a_handshake_post_goes_to_the_rendezvous_and_not_the_circle() {
+        // The request is sealed with the invitation's key, which means only the
+        // inviter can read it. On the circle's channel it would be readable by
+        // everyone in the circle and by nobody who has the invitation, which is
+        // exactly the wrong people.
+        let sink = Fake::new();
+        let (shared, channel) = with_circle();
+        let engine = Engine::new(shared.clone(), sink.clone());
+        engine.attach(&channel);
+        engine.attach_rendezvous("a-rendezvous");
+
+        let post = a_post(&shared, 1_700_000_001_000).unwrap();
+        engine.push_rendezvous(post, "join request", false);
+
+        assert_eq!(engine.queued(), 0, "the request is not on the circle's queue");
+        assert_eq!(sink.sent().len(), 0, "queued is not sent");
+
+        assert_eq!(block_on(async { engine.flush_rendezvous().await }).unwrap(), 1);
+        assert_eq!(engine.rendezvous_queued(), 0);
+        assert_eq!(sink.channels(), vec!["a-rendezvous".to_string()]);
+        assert_eq!(engine.channel(), channel, "the circle's own channel is untouched");
+    }
+
+    #[test]
+    fn reattaching_the_same_rendezvous_keeps_what_is_queued() {
+        // The invite button pressed twice must not throw away a request that is
+        // already on its way out.
+        let sink = Fake::new();
+        let shared = Arc::new(Shared::default());
+        let engine = Engine::new(shared.clone(), sink.clone());
+        engine.attach_rendezvous("a-rendezvous");
+
+        let other = kestrel_core::invite::Invite::mint(
+            &kestrel_core::identity::Identity::generate(),
+            1_700_000_000_000,
+            store::INVITE_TTL_MS,
+        );
+        let pending = kestrel_core::membership::PendingJoin::new(
+            &kestrel_core::invite::parse_fragment(&other.fragment()).unwrap(),
+            1_700_000_000_000,
+        );
+        engine.push_rendezvous(
+            pending.request("Bo", 1_700_000_000_000).expect("a request builds"),
+            "join request",
+            false,
+        );
+
+        engine.attach_rendezvous("a-rendezvous");
+        assert_eq!(engine.rendezvous_queued(), 1, "re-shown invitation dropped the queue");
+
+        // A *different* link does drop it: a post for the old rendezvous on the
+        // new one would be read back as the wrong device's request.
+        engine.attach_rendezvous("another-rendezvous");
+        assert_eq!(engine.rendezvous_queued(), 0);
+        assert_eq!(engine.rendezvous_channel(), "another-rendezvous");
+    }
+
+    #[test]
+    fn switching_rendezvous_restarts_the_cursor_at_zero() {
+        // Two invitations are two channels with two independent numbering. A
+        // cursor carried across would silently skip every message the new link
+        // has already had, which for a join request means nobody is ever asked.
+        let sink = Fake::new();
+        let shared = Arc::new(Shared::default());
+        let engine = Engine::new(shared.clone(), sink.clone());
+
+        engine.attach_rendezvous("first");
+        block_on(async { engine.poll_rendezvous().await }).unwrap();
+        assert_eq!(sink.fetched().last().unwrap(), &("first".to_string(), 0));
+
+        // The same link again: the cursor is kept, so the same request is not
+        // re-read on every poll for the life of the app.
+        block_on(async { engine.poll_rendezvous().await }).unwrap();
+        assert_eq!(sink.fetched().last().unwrap(), &("first".to_string(), 0));
+
+        engine.attach_rendezvous("second");
+        block_on(async { engine.poll_rendezvous().await }).unwrap();
+        assert_eq!(sink.fetched().last().unwrap(), &("second".to_string(), 0));
+    }
+
+    #[test]
+    fn a_device_with_nothing_to_do_does_not_report_itself_offline() {
+        // First run: no circle, no handshake, no permission. Asking a relay for
+        // anything at all here would fail, and the app would claim an outage on
+        // the welcome screen.
+        let sink = Fake::new();
+        let shared = Arc::new(Shared::default());
+        let engine = Arc::new(Engine::new(shared.clone(), sink.clone()));
+        let mut share = ShareLoop::new(engine, shared);
+
+        let tick = share.tick(1_700_000_000_000);
+        assert!(!tick.offline, "an idle device is not an outage");
+        assert_eq!(tick.posted, 0);
+        assert!(sink.channels().is_empty(), "nothing was asked of the relay");
+    }
+
+    #[test]
+    fn the_rendezvous_is_read_while_a_handshake_runs_and_then_not() {
+        // A joiner has no circle, so the circle side of the loop has nothing to
+        // do — and the handshake still has to go out and be watched.
+        let sink = Fake::new();
+        let shared = Arc::new(Shared::default());
+        let engine = Arc::new(Engine::new(shared.clone(), sink.clone()));
+        let mut share = ShareLoop::new(engine.clone(), shared.clone());
+
+        let other = kestrel_core::invite::Invite::mint(
+            &kestrel_core::identity::Identity::generate(),
+            1_700_000_000_000,
+            store::INVITE_TTL_MS,
+        );
+        let received =
+            handshake::begin_join(&shared, &other.fragment(), "Bo", 1_700_000_000_000)
+                .expect("a fragment that parses");
+        handshake::apply(&engine, &received);
+        let channel = received.rendezvous_channel.clone().expect("a channel to read");
+
+        let tick = share.tick(1_700_000_000_001);
+        assert_eq!(tick.posted, 1, "the request went out");
+        assert!(!tick.offline, "a join in progress is not an outage");
+        // Sent, then read: the pass that sends is the pass that looks for an answer.
+        assert_eq!(
+            sink.channels(),
+            vec![channel.clone(), channel.clone()],
+            "one send and one read, both on the rendezvous"
+        );
+        assert_eq!(sink.fetched().last().unwrap(), &(channel.clone(), 0));
+
+        // Walking away stops the reading. A device that has cancelled a join
+        // and still polls every two seconds is a device whose battery drains
+        // on a conversation that ended.
+        handshake::apply(&engine, &handshake::cancel(&shared));
+        let before = sink.channels().len();
+        let tick = share.tick(1_700_000_000_003);
+        assert_eq!(sink.channels().len(), before, "the channel was read again");
+        assert!(engine.rendezvous_channel().is_empty());
+        assert_eq!(tick.posted, 0);
+    }
+
+    #[test]
+    fn a_welcome_queued_after_the_handshake_ends_still_goes_out() {
+        // Accepting a request burns the link, but the ack, the records and the
+        // welcome still have to leave — the handshake that is over is the one
+        // being *waited* on, not the one being sent.
+        let sink = Fake::new();
+        let (shared, channel) = with_circle();
+        let engine = Arc::new(Engine::new(shared.clone(), sink.clone()));
+        let mut share = ShareLoop::new(engine.clone(), shared.clone());
+
+        engine.attach(&channel);
+        engine.attach_rendezvous("a-rendezvous");
+        let post = a_post(&shared, 1_700_000_001_000).unwrap();
+        engine.push_rendezvous(post, "welcome", false);
+        assert!(!handshake::active(&shared), "the link is already burnt");
+
+        let tick = share.tick(1_700_000_000_001);
+        assert_eq!(tick.posted, 1, "the welcome did not go out");
+        assert!(
+            engine.rendezvous_channel().is_empty(),
+            "and the channel was dropped after"
+        );
+    }
 }
 
 /// What one pass of the share loop did, as data.
@@ -1016,11 +1326,26 @@ pub struct ShareLoop {
     shared: Arc<Shared>,
     last_poll_ms: i64,
     last_poll_was_empty: bool,
+    last_handshake_ms: i64,
 }
+
+/// How often the rendezvous is read while a handshake is running.
+///
+/// A join is a short conversation, not a stream: the joiner wants their answer
+/// within a second or two, and the inviter wants to see a request appear while
+/// the other phone is still on screen. Between those and a poll every half
+/// second on two phones doing nothing.
+const HANDSHAKE_POLL_MS: i64 = 2_000;
 
 impl ShareLoop {
     pub fn new(engine: Arc<Engine>, shared: Arc<Shared>) -> Self {
-        Self { engine, shared, last_poll_ms: 0, last_poll_was_empty: false }
+        Self {
+            engine,
+            shared,
+            last_poll_ms: 0,
+            last_poll_was_empty: false,
+            last_handshake_ms: 0,
+        }
     }
 
     /// One pass. Returns what happened rather than doing anything with it.
@@ -1031,37 +1356,84 @@ impl ShareLoop {
         let permissions = self.shared.permissions.lock().map(|p| *p).unwrap_or_default();
 
         tick.sending = should_be_posting(&permissions, sharing);
+
+        // The handshake first, and whether or not this device is sharing: it is
+        // how a circle gets its second member, and it happens before there is
+        // anything at all to share. A joiner has no circle and no permission
+        // yet, and is still waiting on this channel.
+        self.handshake_pass(&mut tick, now);
+
         if tick.sending {
             // Offers the newest fix if it moved enough. The movement decision is in
             // logic, where it is tested; this only drives it.
             self.engine.offer_position();
         }
 
-        match block_on(self.engine.flush()) {
-            Ok(sent) => tick.posted = sent,
-            // An unreachable relay is ordinary, not something to log every half second:
-            // the outbox keeps the post, and the next pass tries again.
-            Err(_) => tick.offline = true,
-        }
-
-        // Fetching is the expensive thing on the wire. An empty feed is worth asking
-        // about once a minute, not every pass, or every phone in a quiet circle spends
-        // its day asking about a circle nobody has spoken in.
-        let elapsed = now.saturating_sub(self.last_poll_ms);
-        if sharing && worth_polling(self.last_poll_was_empty, elapsed) {
-            match block_on(self.engine.poll(now)) {
-                Ok(events) => {
-                    tick.polled = events;
-                    self.last_poll_was_empty = events == 0;
-                }
-                Err(_) => {
-                    tick.offline = true;
-                    self.last_poll_was_empty = true;
-                }
+        // Gated on there being a circle. Without this, a device on the welcome
+        // screen calls a flush that can only fail and reports itself offline for
+        // want of something to send.
+        if self.engine.has_channel() {
+            match block_on(self.engine.flush()) {
+                Ok(sent) => tick.posted += sent,
+                // An unreachable relay is ordinary, not something to log every half second:
+                // the outbox keeps the post, and the next pass tries again.
+                Err(_) => tick.offline = true,
             }
-            self.last_poll_ms = now;
+
+            // Fetching is the expensive thing on the wire. An empty feed is worth asking
+            // about once a minute, not every pass, or every phone in a quiet circle spends
+            // its day asking about a circle nobody has spoken in.
+            let elapsed = now.saturating_sub(self.last_poll_ms);
+            if sharing && worth_polling(self.last_poll_was_empty, elapsed) {
+                match block_on(self.engine.poll(now)) {
+                    Ok(events) => {
+                        tick.polled = events;
+                        self.last_poll_was_empty = events == 0;
+                    }
+                    Err(_) => {
+                        tick.offline = true;
+                        self.last_poll_was_empty = true;
+                    }
+                }
+                self.last_poll_ms = now;
+            }
         }
         tick
+    }
+
+    /// Send and read the rendezvous, and stop reading it once nobody wants it.
+    ///
+    /// Two different conditions. Sending runs whenever there is anything queued,
+    /// including after a handshake has ended and its welcome is still on its way
+    /// out; reading runs only while a handshake is live, so a device that is
+    /// simply sharing does not ask a channel nobody is listening on once every
+    /// two seconds for the rest of the day.
+    fn handshake_pass(&mut self, tick: &mut Tick, now: i64) {
+        let live = handshake::active(&self.shared);
+        if live || self.engine.rendezvous_queued() > 0 {
+            match block_on(self.engine.flush_rendezvous()) {
+                Ok(sent) => tick.posted += sent,
+                Err(_) => tick.offline = true,
+            }
+        }
+
+        if live && now.saturating_sub(self.last_handshake_ms) >= HANDSHAKE_POLL_MS {
+            self.last_handshake_ms = now;
+            match block_on(self.engine.poll_rendezvous()) {
+                Ok(posts) => {
+                    let received = handshake::receive(&self.shared, &posts, now);
+                    handshake::apply(&self.engine, &received);
+                }
+                Err(_) => tick.offline = true,
+            }
+        }
+
+        if !live && self.engine.rendezvous_queued() == 0 {
+            // Everything for this handshake has gone out and nobody is waiting
+            // on the channel any more. Detaching stops the cursor from being a
+            // number the next link would inherit.
+            self.engine.attach_rendezvous("");
+        }
     }
 
     /// How long to sleep until the next pass.

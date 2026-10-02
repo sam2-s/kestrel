@@ -288,6 +288,39 @@ pub fn save_settings(settings: &Settings) -> std::io::Result<()> {
     write_private(&settings_path(), &bytes)
 }
 
+/// The live invitation, if one is still usable.
+///
+/// Persisted because the code a user has already shown somebody must keep
+/// working after the app is closed. Re-minting on the next launch would leave
+/// the QR on the other phone pointing at a rendezvous nobody is listening on,
+/// which is a link that looks alive and answers nothing.
+pub fn invite_path() -> std::path::PathBuf {
+    dir().join("invite.json")
+}
+
+/// Remember an invitation.
+pub fn save_invite(invite: &kestrel_core::invite::Invite) -> std::io::Result<()> {
+    let bytes = serde_json::to_vec(invite)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    write_private(&invite_path(), &bytes)
+}
+
+/// Read the invitation back, if one is there and still usable.
+///
+/// An expired one is discarded rather than loaded: a link the relay will refuse
+/// is not a link, and keeping it would put a dead rendezvous on the wire every
+/// time the app starts.
+pub fn load_invite(now: i64) -> Option<kestrel_core::invite::Invite> {
+    let bytes = read(&invite_path())?;
+    let invite: kestrel_core::invite::Invite = serde_json::from_slice(&bytes).ok()?;
+    (!invite.is_expired(now)).then_some(invite)
+}
+
+/// Forget the invitation. Called once its handshake has been used.
+pub fn clear_invite() {
+    let _ = std::fs::remove_file(invite_path());
+}
+
 /// Where the map was left.
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub struct LastCamera {
@@ -320,8 +353,14 @@ pub fn save_camera(camera: LastCamera) {
 /// location history behind would defeat the point of typing a second passcode while
 /// someone is holding your phone.
 pub fn wipe() {
-    for path in [seed_path(), identity_path(), lock_path(), settings_path(), camera_path()]
-    {
+    for path in [
+        seed_path(),
+        identity_path(),
+        lock_path(),
+        settings_path(),
+        camera_path(),
+        invite_path(),
+    ] {
         let _ = std::fs::remove_file(path);
     }
 }
@@ -486,5 +525,19 @@ mod tests {
     #[test]
     fn an_invitation_lives_for_an_hour() {
         assert_eq!(INVITE_TTL_MS, 3_600_000);
+    }
+
+    #[test]
+    fn an_invitation_survives_a_round_trip() {
+        // The code somebody already scanned has to still be the code after the app
+        // is closed, or the link on the other phone points at nothing.
+        let inviter = kestrel_core::identity::Identity::generate();
+        let now = 1_700_000_000_000;
+        let invite = kestrel_core::invite::Invite::mint(&inviter, now, INVITE_TTL_MS);
+        let bytes = serde_json::to_vec(&invite).unwrap();
+        let back: kestrel_core::invite::Invite = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(back.fragment(), invite.fragment());
+        assert_eq!(back.channel(), invite.channel());
+        assert!(!back.is_expired(now + 1));
     }
 }

@@ -21,6 +21,7 @@ use crate::{
     alerts,
     draw::Map,
     engine::{self, Engine},
+    handshake::{self, Handshake},
     logic,
     map::{self, Basemap},
     permissions::{Grant, Permissions},
@@ -380,15 +381,21 @@ fn stop_sharing(ctx: &Ctx) {
 fn fit_to_everyone(ctx: &Ctx) {
     let now = crate::state::now_ms();
     let (w, h) = (ctx.viewport.x as f64, ctx.viewport.y as f64);
-    // Both locks at once, held only for the arithmetic. Nested in one order only —
-    // state then circles — so the two can never deadlock against each other.
-    let fitted = ctx.shared.with_circle(|circle| {
-        let Ok(mut state) = ctx.shared.state.lock() else {
-            return false;
-        };
-        map::fit(&mut state.camera, circle, now, (w, h))
-    });
-    if !fitted.unwrap_or(false) {
+    // Both locks at once, held only for the arithmetic, and in the one order
+    // everything else takes them: state then circles. Nesting `state` inside
+    // `with_circle` would be the reverse, and would deadlock against the
+    // handshake, which holds `state` while it asks `circles` for the roster it
+    // is about to admit somebody into.
+    let fitted = match ctx.shared.state.lock() {
+        Ok(mut state) => match ctx.shared.circles.lock() {
+            Ok(mut circles) => circles
+                .first_mut()
+                .is_some_and(|circle| map::fit(&mut state.camera, circle, now, (w, h))),
+            Err(_) => false,
+        },
+        Err(_) => false,
+    };
+    if !fitted {
         tell(ctx, strings::get(Language::English, "error.no_location"));
     }
     save_camera(ctx);
@@ -479,6 +486,29 @@ fn permission_of(key: &str) -> crate::permissions::Permission {
 
 fn join(ui: &mut egui::Ui, ctx: &Ctx, language: Language) {
     ui.heading(strings::get(language, "join.title"));
+
+    // Already asking: say where it got to rather than showing an input the
+    // answer will not come from. The number is the joiner's own, and reading it
+    // aloud is the whole of what this device has left to do.
+    let waiting = ctx.shared.state.lock().ok().and_then(|s| match &s.handshake {
+        Handshake::Joining(j) => Some(j.pending.safety_number.clone()),
+        _ => None,
+    });
+    if let Some(number) = waiting {
+        ui.add_space(8.0);
+        ui.label(strings::get(language, "join.your_number"));
+        ui.heading(&number);
+        ui.label(strings::get(language, "join.waiting"));
+        ui.add_space(12.0);
+        if ui.button(strings::get(language, "join.cancel")).clicked() {
+            let received = handshake::cancel(&ctx.shared);
+            if let Some(engine) = &ctx.engine {
+                handshake::apply(engine, &received);
+            }
+        }
+        return;
+    }
+
     ui.label(strings::get(language, "join.ask"));
     ui.add_space(8.0);
 
@@ -501,9 +531,7 @@ fn join(ui: &mut egui::Ui, ctx: &Ctx, language: Language) {
         let button =
             ui.add_enabled(usable, egui::Button::new(strings::get(language, "join.go")));
         if button.clicked() {
-            // Not yet wired to the relay handshake. Said plainly rather than by doing
-            // nothing: a person who taps this and sees no change will not tap it again.
-            tell(ctx, "The relay handshake is not finished yet. Your code is kept.");
+            start_join(ctx, &typed);
         }
         if ui.button(strings::get(language, "join.scan")).clicked() {
             ctx.platform.start_scan();
@@ -514,21 +542,45 @@ fn join(ui: &mut egui::Ui, ctx: &Ctx, language: Language) {
     }
 }
 
+/// Ask to join, or explain why not.
+///
+/// Staying on the join screen is deliberate: the next thing that happens is the
+/// inviter answering, and a screen that changed to somewhere else would be one
+/// the person has to find their way back from when it does.
+fn start_join(ctx: &Ctx, fragment: &str) {
+    let name = ctx.shared.state.lock().map(|s| s.name.clone()).unwrap_or_default();
+    let now = crate::state::now_ms();
+    match handshake::begin_join(&ctx.shared, fragment, &name, now) {
+        Ok(received) => {
+            if let Some(engine) = &ctx.engine {
+                handshake::apply(engine, &received);
+            }
+        }
+        Err(e) => tell(ctx, e),
+    }
+}
+
 /// Mint this device's invitation and show it.
 fn mint_invite(ctx: &Ctx, language: Language) {
-    let Some(invite) = ctx.shared.mint_invite(crate::state::now_ms()) else {
-        tell(ctx, strings::get(language, "map.no_circle"));
-        return;
-    };
-    let fragment = invite.fragment();
-    if let Ok(mut state) = ctx.shared.state.lock() {
-        state.invite = Some(fragment.clone());
+    let now = crate::state::now_ms();
+    match handshake::begin_invite(&ctx.shared, now) {
+        Ok((fragment, received)) => {
+            if let Some(engine) = &ctx.engine {
+                handshake::apply(engine, &received);
+            }
+            if let Ok(mut state) = ctx.shared.state.lock() {
+                state.invite = Some(fragment.clone());
+            }
+            // The code is rendered on screen *and* offered to the share sheet. Sending it
+            // as a string is the part that matters for a long invitation; the QR is for
+            // the two phones-in-the-same-room case, where reading it out is faster.
+            ctx.platform.notify(&strings::get(language, "help.mint_title"), &fragment);
+            let _ = crate::qr::encode(&fragment);
+        }
+        // No circle, or the circle is busy. Said rather than left as a button
+        // that does nothing.
+        Err(e) => tell(ctx, e),
     }
-    // The code is rendered on screen *and* offered to the share sheet. Sending it as a
-    // string is the part that matters for a long invitation; the QR is for the two
-    // phones-in-the-same-room case, where reading it out is faster.
-    ctx.platform.notify(&strings::get(language, "help.mint_title"), &fragment);
-    let _ = crate::qr::encode(&fragment);
 }
 
 // ----------------------------------------------------------------- review
@@ -536,20 +588,49 @@ fn mint_invite(ctx: &Ctx, language: Language) {
 fn review(ui: &mut egui::Ui, ctx: &Ctx, language: Language) {
     ui.heading(strings::get(language, "review.title"));
     let pending = ctx.shared.state.lock().ok().and_then(|s| s.pending_name.clone());
-    if let Some((number, name)) = pending {
-        ui.label(strings::with(language, "review.says", "{}", &name));
-        ui.heading(&number);
-    }
+    let Some((number, name)) = pending else {
+        // The request was withdrawn, refused, or already dealt with. Saying so
+        // beats a screen with two buttons and nothing behind them.
+        ui.label(strings::get(language, "review.gone"));
+        ui.add_space(12.0);
+        if ui.button(strings::get(language, "settings.close")).clicked() {
+            handshake::decline(&ctx.shared);
+        }
+        return;
+    };
+
+    ui.label(strings::with(language, "review.says", "{}", &name));
+    ui.heading(&number);
     ui.label(strings::get(language, "review.compare"));
     ui.add_space(12.0);
     if ui.button(strings::get(language, "review.accept")).clicked() {
-        tell(ctx, "Letting someone in is not finished yet.");
+        accept(ctx, language);
     }
-    if ui.button(strings::get(language, "review.decline")).clicked()
-        && let Ok(mut state) = ctx.shared.state.lock()
-    {
-        state.pending_name = None;
-        state.go(Screen::Map);
+    if ui.button(strings::get(language, "review.decline")).clicked() {
+        handshake::decline(&ctx.shared);
+    }
+}
+
+/// Let the person in, and say what happened.
+///
+/// A refusal leaves the screen up only if there is still somebody on it to
+/// retry for; otherwise it goes back to the map rather than offering an Accept
+/// button for a decision that no longer exists.
+fn accept(ctx: &Ctx, language: Language) {
+    let now = crate::state::now_ms();
+    let received = handshake::accept(&ctx.shared, now);
+    if let Some(engine) = &ctx.engine {
+        handshake::apply(engine, &received);
+    }
+
+    let still_pending =
+        ctx.shared.state.lock().map(|s| s.pending_name.is_some()).unwrap_or(false);
+    if !still_pending {
+        go(ctx, Screen::Map);
+    }
+    match received.error {
+        Some(e) => tell(ctx, e),
+        None => tell(ctx, strings::get(language, "review.admitted")),
     }
 }
 
