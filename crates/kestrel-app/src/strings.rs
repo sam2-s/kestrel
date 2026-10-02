@@ -179,6 +179,14 @@ const EN: &[(&str, &str)] = &[
     ("settings.passcode_hint", "At least six characters"),
     ("settings.wipe", "Erase everything"),
     ("settings.wipe_hint", "Deletes the keys. Nothing shared can be recovered."),
+    ("settings.relay", "Relay"),
+    (
+        "settings.relay_hint",
+        "Where this phone sends its posts. It needs https, unless it is on your own network.",
+    ),
+    ("settings.relay_save", "Save"),
+    ("settings.relay_saved", "Now sending to {}."),
+    ("settings.relay_offline", "There is no relay connection to change yet."),
     ("settings.version", "Version 0.1.0 · GPL-3.0-or-later"),
     ("settings.close", "Close"),
     // --- permissions, by the app's own names
@@ -329,6 +337,14 @@ const ES: &[(&str, &str)] = &[
     ("settings.passcode_hint", "Al menos seis caracteres"),
     ("settings.wipe", "Borrarlo todo"),
     ("settings.wipe_hint", "Elimina las claves. Nada de lo compartido se podrá recuperar."),
+    ("settings.relay", "Servidor relay"),
+    (
+        "settings.relay_hint",
+        "A dónde envía este teléfono tus publicaciones. Necesita https, salvo que esté en tu propia red.",
+    ),
+    ("settings.relay_save", "Guardar"),
+    ("settings.relay_saved", "Ahora se envía a {}."),
+    ("settings.relay_offline", "Todavía no hay una conexión con el relay que cambiar."),
     ("settings.version", "Versión 0.1.0 · GPL-3.0-or-later"),
     ("settings.close", "Cerrar"),
     ("perm.location", "Ubicación"),
@@ -446,6 +462,17 @@ const DE: &[(&str, &str)] = &[
     ("settings.passcode", "Passcode"),
     ("settings.wipe", "Alles löschen"),
     ("settings.wipe_hint", "Löscht die Schlüssel. Nichts Geteiltes ist wiederherstellbar."),
+    ("settings.relay", "Relay"),
+    (
+        "settings.relay_hint",
+        "Wohin dieses Telefon deine Beiträge sendet. Braucht https, außer es liegt in deinem eigenen Netz.",
+    ),
+    ("settings.relay_save", "Speichern"),
+    ("settings.relay_saved", "Sendet jetzt an {}."),
+    (
+        "settings.relay_offline",
+        "Es gibt noch keine Relay-Verbindung, die geändert werden könnte.",
+    ),
     ("settings.close", "Schließen"),
     ("perm.location", "Standort"),
     ("perm.background-location", "Standort im Hintergrund"),
@@ -600,6 +627,25 @@ mod tests {
                 assert!(!text.is_empty() && text != key, "{language:?} has no {key}");
             }
         }
+    }
+
+    #[test]
+    fn the_relay_row_says_something_in_every_language() {
+        // Same trap as the lock: a key with no entry renders as the key itself.
+        for language in Language::ALL {
+            for key in [
+                "settings.relay",
+                "settings.relay_hint",
+                "settings.relay_save",
+                "settings.relay_saved",
+                "settings.relay_offline",
+            ] {
+                let text = get(language, key);
+                assert!(!text.is_empty() && text != key, "{language:?} has no {key}");
+            }
+        }
+        // The saved line carries the address, so it has to have somewhere to put it.
+        assert!(get(Language::English, "settings.relay_saved").contains("{}"));
     }
 
     #[test]

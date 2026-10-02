@@ -686,6 +686,8 @@ fn settings(ui: &mut egui::Ui, ctx: &Ctx, language: Language) {
     );
     ui.label(RichText::new(alerts::TOR_NOTICE).small().weak());
 
+    relay_block(ui, ctx, language);
+
     permissions_block(ui, ctx, language);
 
     app_lock_block(ui, ctx, language);
@@ -771,6 +773,66 @@ fn unlock(ctx: &Ctx, language: Language, passcode: &str) {
         }
     }
     go(ctx, Screen::Map);
+}
+
+// ------------------------------------------------------------------ relay
+
+/// Where this phone sends its posts.
+///
+/// Offered because the alternative — a hardcoded address nobody can change —
+/// makes the app useless to anyone who wants their own relay, and useless to
+/// anyone whose circle has moved off the reference deployment. The address is
+/// checked before it is saved or used, so a typo says what is wrong with it
+/// rather than quietly becoming a device that posts nowhere.
+fn relay_block(ui: &mut egui::Ui, ctx: &Ctx, language: Language) {
+    ui.separator();
+    ui.label(RichText::new(strings::get(language, "settings.relay")).strong());
+
+    let mut relay = ctx.shared.state.lock().map(|s| s.relay.clone()).unwrap_or_default();
+    ui.horizontal(|ui| {
+        ui.text_edit_singleline(&mut relay);
+    });
+    if let Ok(mut state) = ctx.shared.state.lock() {
+        state.relay = relay.clone();
+    }
+    ui.label(RichText::new(strings::get(language, "settings.relay_hint")).small().weak());
+
+    if ui.button(strings::get(language, "settings.relay_save")).clicked() {
+        save_relay(ctx, language, &relay);
+    }
+}
+
+/// Validate the address, point the engine at it, and only then remember it.
+///
+/// Order matters: an address that will not be accepted must not be written to
+/// the settings file, or the next launch reads back the mistake and falls back
+/// to the default while the field still shows the broken one.
+fn save_relay(ctx: &Ctx, language: Language, value: &str) {
+    let trimmed = value.trim().to_string();
+    let Some(engine) = ctx.engine.as_ref() else {
+        tell(ctx, strings::get(language, "settings.relay_offline"));
+        return;
+    };
+    match engine.set_relay(&trimmed) {
+        Ok(()) => {
+            let mut settings = store::load_settings();
+            settings.relay = trimmed.clone();
+            if let Err(e) = store::save_settings(&settings) {
+                tell(ctx, format!("Could not save your settings: {e}"));
+                return;
+            }
+            // The field shows what is in force, not what was typed: the
+            // trailing slash the address does not need is not a thing to
+            // stare at every time settings is opened.
+            if let Ok(mut state) = ctx.shared.state.lock() {
+                state.relay = trimmed.clone();
+            }
+            tell(ctx, strings::with(language, "settings.relay_saved", "{}", &trimmed));
+        }
+        // What `Relay` refuses: an empty address, one with no scheme, plain http
+        // to anywhere that is not this network. Each of those says what to do.
+        Err(e) => tell(ctx, e),
+    }
 }
 
 // -------------------------------------------------------------- app lock
@@ -1068,6 +1130,7 @@ mod tests {
             follow: true,
             beacon: None,
             language: 0,
+            relay: store::DEFAULT_RELAY.to_string(),
         };
         assert!(!settings_changed(&a, &a.clone()));
         let mut b = a.clone();

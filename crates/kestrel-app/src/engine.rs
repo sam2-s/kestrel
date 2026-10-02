@@ -47,6 +47,15 @@ pub trait Sink: Send + Sync {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<Feed, String>> + Send + 'a>,
     >;
+
+    /// Point the sink at a different relay.
+    ///
+    /// A default because not every sink is a relay: a fake in a test has
+    /// nowhere to point, and one that refused would make the settings screen
+    /// unusable in every test that touches it.
+    fn set_relay(&self, _base: &str) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// The real relay.
@@ -55,20 +64,26 @@ pub struct NetSink {
     /// A `std::sync::MutexGuard` across an await makes the future non-`Send`, which would
     /// force every caller onto one thread — which is to say, make this async for nothing.
     relay: tokio::sync::Mutex<Relay>,
-    base: String,
+    /// Where it points, kept beside the client so the two cannot disagree.
+    base: std::sync::Mutex<String>,
 }
 
 impl NetSink {
     pub fn new(base: &str) -> Result<Self, String> {
         Ok(Self {
             relay: tokio::sync::Mutex::new(Relay::new(base)?),
-            base: base.trim_end_matches('/').to_string(),
+            base: std::sync::Mutex::new(normalized(base)),
         })
     }
 
-    pub fn base(&self) -> &str {
-        &self.base
+    pub fn base(&self) -> String {
+        self.base.lock().map(|b| b.clone()).unwrap_or_default()
     }
+}
+
+/// An address as [`Relay`] stores it, for comparing one with another.
+fn normalized(base: &str) -> String {
+    base.trim().trim_end_matches('/').to_string()
 }
 
 impl Sink for NetSink {
@@ -109,6 +124,23 @@ impl Sink for NetSink {
                 Err(e) => Err(format!("{e:?}")),
             }
         })
+    }
+
+    fn set_relay(&self, base: &str) -> Result<(), String> {
+        // Built first and swapped second, so an address the check refuses has
+        // not already replaced the relay that was working.
+        let relay = Relay::new(base)?;
+        // Taken with `blocking_lock` rather than `try_lock`: the caller is the
+        // settings screen on the UI thread, there is no runtime for it to be
+        // forbidden inside — the app drives its futures by hand — and spinning
+        // here would be a UI thread spinning behind an in-flight request.
+        let mut guard = self.relay.blocking_lock();
+        *guard = relay;
+        drop(guard);
+        if let Ok(mut slot) = self.base.lock() {
+            *slot = normalized(base);
+        }
+        Ok(())
     }
 }
 
@@ -177,6 +209,26 @@ impl Engine {
         if let Ok(mut last) = self.last_queued.lock() {
             *last = None;
         }
+    }
+
+    /// Point the engine at a different relay.
+    ///
+    /// The cursors and the backoff go with the old one. A new relay has its own
+    /// history, so a cursor from the old one would skip everything the new one
+    /// has not seen — and a backoff built from a relay that was down says
+    /// nothing about one that has never been asked.
+    pub fn set_relay(&self, base: &str) -> Result<(), String> {
+        self.sink.set_relay(base)?;
+        if let Ok(mut cursor) = self.cursor.lock() {
+            *cursor = 0;
+        }
+        if let Ok(mut rendezvous) = self.rendezvous.lock() {
+            rendezvous.cursor = 0;
+        }
+        if let Ok(mut backoff) = self.backoff.lock() {
+            backoff.reset();
+        }
+        Ok(())
     }
 
     /// The channel this engine serves.
@@ -1190,6 +1242,53 @@ mod tests {
         engine.attach_rendezvous("second");
         block_on(async { engine.poll_rendezvous().await }).unwrap();
         assert_eq!(sink.fetched().last().unwrap(), &("second".to_string(), 0));
+    }
+
+    #[test]
+    fn changing_the_relay_starts_the_cursor_over() {
+        // A new relay has its own history. Carrying the old cursor across would
+        // ask it for everything *since* somewhere it has never heard of, and
+        // get nothing back — a device that reads an empty feed forever while
+        // its circle talks on a channel it is not looking at.
+        let sink = Fake::new();
+        let shared = Arc::new(Shared::default());
+        let engine = Engine::new(shared.clone(), sink.clone());
+        engine.attach_rendezvous("a-rendezvous");
+        sink.set_feed(Feed { now: 42, members: Vec::new() });
+
+        block_on(async { engine.poll_rendezvous().await }).unwrap();
+        assert_eq!(sink.fetched().last().unwrap(), &("a-rendezvous".to_string(), 0));
+
+        // A fake has nowhere to point, so this only reports that it was asked:
+        // what is under test is what the engine does with its own state.
+        engine.set_relay("https://another.example").expect("a fake accepts anything");
+
+        block_on(async { engine.poll_rendezvous().await }).unwrap();
+        assert_eq!(
+            sink.fetched().last().unwrap(),
+            &("a-rendezvous".to_string(), 0),
+            "the cursor survived a change of relay"
+        );
+    }
+
+    #[test]
+    fn a_relay_address_is_checked_before_it_is_adopted() {
+        // Built first and swapped second: an address that will not be accepted
+        // must leave the one that was working in place, or a typo takes the
+        // app off the air.
+        let sink = NetSink::new("https://relay.example").expect("a valid address");
+        assert_eq!(sink.base(), "https://relay.example");
+
+        assert!(sink.set_relay("relay.example").is_err(), "no scheme was accepted");
+        assert!(sink.set_relay("").is_err(), "an empty address was accepted");
+        assert!(
+            sink.set_relay("http://relay.example").is_err(),
+            "plain http to a public address was accepted"
+        );
+        assert_eq!(sink.base(), "https://relay.example", "the working relay was replaced");
+
+        sink.set_relay("https://other.example/").expect("a valid address");
+        assert_eq!(sink.base(), "https://other.example", "the trailing slash was kept");
     }
 
     #[test]

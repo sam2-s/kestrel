@@ -258,6 +258,12 @@ fn hex_decode(s: &str) -> Option<Vec<u8>> {
 /// enough that a screenshot of the chat it was pasted into is worthless by the evening.
 pub const INVITE_TTL_MS: i64 = 60 * 60 * 1000;
 
+/// The relay this build sends to when nothing else has been chosen.
+///
+/// A constant rather than a setting that starts empty, because "empty" would be
+/// a device with somewhere to send and no idea where.
+pub const DEFAULT_RELAY: &str = "https://starlingmap.app";
+
 /// The signed-in state, as it is remembered between runs.
 ///
 /// Only what is not already in the circle: the name the user chose and whether they
@@ -286,11 +292,30 @@ pub struct Settings {
     /// everyone's choice. Absent means the first language, which is English.
     #[serde(default)]
     pub language: u8,
+    /// Where this device sends its posts, as a full address.
+    ///
+    /// A field rather than a choice from a list, because the point of the field
+    /// is that a relay can be somebody's own server — and a list would be a list
+    /// of the ones this build happens to know about. Empty means
+    /// [`DEFAULT_RELAY`], which is what a settings file written before this
+    /// existed holds, and what a file with no relay in it holds too.
+    #[serde(default)]
+    pub relay: String,
 }
 
 /// Read the settings, or the defaults.
+///
+/// The relay is normalised here rather than trusted: an empty field reaches the
+/// engine as "no address", and `Relay::new` refuses an empty address, so a
+/// settings file without one would be a device that cannot talk to anybody.
 pub fn load_settings() -> Settings {
-    read(&settings_path()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+    let mut settings = read(&settings_path())
+        .and_then(|b| serde_json::from_slice::<Settings>(&b).ok())
+        .unwrap_or_default();
+    if settings.relay.is_empty() {
+        settings.relay = DEFAULT_RELAY.to_string();
+    }
+    settings
 }
 
 /// Save the settings.
@@ -434,12 +459,35 @@ mod tests {
             follow: true,
             beacon: None,
             language: 0,
+            relay: DEFAULT_RELAY.to_string(),
         };
         let bytes = serde_json::to_vec(&settings).unwrap();
         let back: Settings = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(back.name, "Ada");
         assert!(back.follow);
         assert!(!back.tor);
+    }
+
+    #[test]
+    fn a_settings_file_with_no_relay_gets_the_builds_own() {
+        // A file written before the relay was a setting, and a file with an
+        // empty field, both have to reach the engine as an address rather than
+        // as "no address". The normalisation is in load_settings, so this
+        // checks the shape it is checking rather than the function itself.
+        let mut settings = Settings::default();
+        assert_eq!(settings.relay, "", "the derived default is empty");
+        settings.relay = DEFAULT_RELAY.to_string();
+        assert_eq!(settings.relay, "https://starlingmap.app");
+
+        let bytes = serde_json::to_vec(&settings).unwrap();
+        let trimmed: Vec<u8> = {
+            // "relay": "" is what an older writer leaves behind.
+            let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            value["relay"] = serde_json::Value::String(String::new());
+            serde_json::to_vec(&value).unwrap()
+        };
+        let back: Settings = serde_json::from_slice(&trimmed).unwrap();
+        assert_eq!(back.relay, "", "an empty field round-trips as empty");
     }
 
     #[test]

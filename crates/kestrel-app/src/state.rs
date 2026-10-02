@@ -147,6 +147,9 @@ pub struct AppState {
     pub new_passcode: String,
     /// Whether the app-lock form in settings is open.
     pub setting_lock: bool,
+    /// The relay address as last edited, so a field does not start empty every
+    /// frame and lose what is being typed into it.
+    pub relay: String,
     /// egui's zoom factor for the pinch in progress last frame. Zero when there is not a
     /// pinch, which is what makes the next frame's ratio the whole gesture.
     pub pinch_spread: f32,

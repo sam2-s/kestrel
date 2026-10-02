@@ -26,13 +26,6 @@ use crate::{
     store,
 };
 
-/// The relay the app talks to.
-///
-/// The reference deployment's. Not configurable yet: a settings field that does nothing
-/// would be worse than no field, and a person running their own relay needs a decision
-/// made about how the app trusts it first.
-const DEFAULT_RELAY: &str = "https://starlingmap.app";
-
 /// The entry point `NativeActivity` calls, on its own thread.
 ///
 /// `android-activity` spawns this once the library is loaded and the activity exists,
@@ -63,6 +56,7 @@ pub fn android_main(app: AndroidApp) {
     // lock screen is the screen that must show nothing about it.
     let settings = store::load_settings();
     let locked = store::is_locked();
+    let relay = settings.relay.clone();
     let channel = match logic::restore_circle(None) {
         Some(circle) => {
             let channel = circle.channel().to_string();
@@ -76,6 +70,7 @@ pub fn android_main(app: AndroidApp) {
         None => None,
     };
     if let Ok(mut state) = shared.state.lock() {
+        state.relay = relay.clone();
         state.name = settings.name;
         state.language =
             crate::strings::Language::from_index(settings.language).unwrap_or_default();
@@ -88,7 +83,15 @@ pub fn android_main(app: AndroidApp) {
     // The engine, pointed at whatever circle was restored. A relay that will not
     // resolve leaves the app fully usable with no sharing, which is better than
     // refusing to start.
-    let engine = match NetSink::new(DEFAULT_RELAY) {
+    // The address the settings name. A file edited by hand can name something
+    // that is not an address, and shutting the app up over a typo would be a
+    // worse answer than falling back to this build's own — which still leaves
+    // what was typed on the settings screen, where it can be put right.
+    let sink = NetSink::new(&relay).or_else(|e| {
+        log::warn!("relay {relay:?} is not usable ({e}); using this build's own instead");
+        NetSink::new(store::DEFAULT_RELAY)
+    });
+    let engine = match sink {
         Ok(sink) => {
             let engine = Arc::new(Engine::new(shared.clone(), Arc::new(sink)));
             engine.attach(channel.as_deref().unwrap_or_default());
