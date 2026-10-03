@@ -102,7 +102,7 @@ function showPanel(title, body) {
 // So it moves into sessionStorage, which belongs to this tab and dies with
 // it, and the URL is rewritten without it. A reload still works; a new tab
 // needs the original link, which is still in whatever message carried it.
-const STASH = "starling-beacon";
+const STASH = "kestrel-beacon";
 
 function takeSecret() {
   const fromHash = parseBeaconFragment(location.hash);

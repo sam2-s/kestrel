@@ -1704,7 +1704,7 @@ export function openExportSheet(json, { onClose } = {}) {
   if (globalThis.location?.protocol === "https:" || globalThis.location?.protocol === "http:") {
     const dl = el("a", "btn btn-ghost");
     dl.textContent = t("Download as a file");
-    dl.download = "starling-data.json";
+    dl.download = "kestrel-data.json";
     dl.href = URL.createObjectURL(new Blob([json], { type: "application/json" }));
     ov.node.addEventListener?.("close", () => URL.revokeObjectURL(dl.href));
     actions.append(dl);
@@ -2576,7 +2576,7 @@ export function openSettingsSheet({ api, values, demo, tor, keepSharing, backgro
       relayField.append(el("span", "field-label", "Relay"));
       const relayIn = el("input", "text-input");
       relayIn.type = "url";
-      relayIn.placeholder = "https://starlingmap.app";
+      relayIn.placeholder = "https://relay.example.org";
       relayIn.autocomplete = "off";
       relayIn.value = values.relay || "";
       relayIn.dataset.testid = "relay-input";

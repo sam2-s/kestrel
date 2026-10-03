@@ -178,7 +178,7 @@ async function main() {
     check("wrapper: no APK download card inside the app", !w.landingApp);
     check("wrapper: no install-yourself nudge inside the app", !w.installCard);
     check("wrapper: no FAQ, no site footer", !w.faq && !w.footer);
-    check("wrapper: about link shown and points at the bare site", w.aboutShown && w.aboutHref === "https://starlingmap.app/", w.aboutHref);
+    check("wrapper: about link shown and points at the repo readme", w.aboutShown && w.aboutHref === "https://github.com/sam2-s/kestrel#readme", w.aboutHref);
     check("wrapper: create and demo buttons present", w.createShown && w.demoShown);
     check("wrapper: console clean", w.errs.length === 0, JSON.stringify(w.errs));
     const shot = await wrap.send("Page.captureScreenshot", { format: "png" });

@@ -20,20 +20,18 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Kestrel">
-<link rel="canonical" href="https://starlingmap.app/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Kestrel">
 <meta property="og:title" content="Kestrel: private location sharing">
 <meta property="og:description" content="End to end encrypted location sharing for your circle. No accounts, no tracking. Free Android app, live demo in the browser.">
-<meta property="og:url" content="https://starlingmap.app/">
-<meta property="og:image" content="https://starlingmap.app/icons/og.png">
+<meta property="og:image" content="https://raw.githubusercontent.com/sam2-s/kestrel/main/app/icons/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="The Kestrel logo: private location sharing for your circle.">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Kestrel: private location sharing">
 <meta name="twitter:description" content="End to end encrypted location sharing for your circle. No accounts, no tracking.">
-<meta name="twitter:image" content="https://starlingmap.app/icons/og.png">
+<meta name="twitter:image" content="https://raw.githubusercontent.com/sam2-s/kestrel/main/app/icons/og.png">
 <meta name="twitter:image:alt" content="The Kestrel logo: private location sharing for your circle.">
 <title>Kestrel: private location sharing</title>
 <script type="application/ld+json">
@@ -44,7 +42,7 @@
   "operatingSystem": "Android",
   "applicationCategory": "UtilitiesApplication",
   "description": "Private, end to end encrypted location sharing for your circle. No accounts, no tracking.",
-  "url": "https://starlingmap.app/",
+  "url": "https://github.com/sam2-s/kestrel",
   "downloadUrl": "https://github.com/sam2-s/kestrel/releases/latest/download/kestrel.apk",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "author": { "@type": "Person", "name": "Kestrel authors", "url": "https://github.com/sam2-s" },
@@ -120,8 +118,7 @@
       <p class="ob-tagline" data-i18n>Your people, on your map. Nobody else.</p>
       <p class="lnd-subline">Create a circle, send one link, and watch each other arrive.
         Nothing about where you are ever leaves your phone in a form anyone else can read.
-        <span class="web-only">The app lives on Android today; iPhone owners can build the
-        iOS app from source, or watch the demo below.</span></p>
+        <span class="web-only">The app lives on Android today; watch the demo below from any browser.</span></p>
       <ul class="lnd-trustrow">
         <li><span class="lnd-trust-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 3 4.5 6v6c0 4.4 3 7.9 7.5 9 4.5-1.1 7.5-4.6 7.5-9V6L12 3Z"/></svg></span>End-to-end encrypted</li>
         <li><span class="lnd-trust-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4.5 20.5v-1a6.5 6.5 0 0 1 13 0v1M11 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m17 9 1.6 1.6L22 7"/></svg></span>No accounts</li>
@@ -135,9 +132,8 @@
         <h2 class="land-card-title">You have an invite</h2>
         <p class="land-card-sub">Invites open in the app, where your circle's secret lives
           outside the browser. On Android: install the app below, then tap your invite link again
-          and it will join there. On an iPhone: there is no store app yet, so this link only works
-          if you build the iOS app yourself (see the iPhone question below) and paste the link
-          inside its Join screen. The secret in your link never left this device.</p>
+          and it will join there. On an iPhone: there is no app yet, so the link stays here in
+          the browser for now. The secret in your link never left this device.</p>
       </div>
 
       <div class="land-card land-note" id="landing-legacy" hidden>
@@ -174,7 +170,7 @@
     </div>
     <p class="ob-footer" data-i18n>End-to-end encrypted. No accounts. Open protocol.</p>
     <div class="ob-about" id="ob-about" hidden>
-      <a class="btn btn-ghost" id="about-site" href="https://starlingmap.app/" data-i18n>What Kestrel is and how it works &#8599;</a>
+      <a class="btn btn-ghost" id="about-site" href="https://github.com/sam2-s/kestrel#readme" data-i18n>What Kestrel is and how it works &#8599;</a>
       <button type="button" class="btn btn-ghost" data-testid="onboarding-relay" data-i18n>Use your own relay</button>
     </div>
 
@@ -384,11 +380,9 @@
         </details>
         <details class="lnd-faq-item">
           <summary>Is there an iPhone app?</summary>
-          <p>There is an iOS app you can build yourself: the repository ships a wrapper that holds
-            a real circle, with the honest catch that iOS gives it no background sharing, and
-            installing it means a Mac with Xcode and re-signing every 7 days on a free Apple ID.
-            It is not on the App Store or TestFlight yet. The website itself still does not open
-            circles on purpose: a browser tab is the weakest place to keep a location secret.</p>
+          <p>Not yet. Kestrel ships an Android app and this website; this repository holds no
+            iOS build to make. The website itself does not open circles on purpose: a browser
+            tab is the weakest place to keep a location secret.</p>
         </details>
         <details class="lnd-faq-item">
           <summary>How is this different from mainstream family trackers?</summary>
