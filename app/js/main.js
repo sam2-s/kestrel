@@ -477,7 +477,7 @@ function applyTheme() {
   document.documentElement.dataset.theme = t;
   // Match the browser chrome (status bar, address bar) to the active theme.
   const bar = document.querySelector('meta[name="theme-color"]');
-  if (bar) bar.setAttribute("content", t === "light" ? "#f4f6fb" : "#0a0d14");
+  if (bar) bar.setAttribute("content", t === "light" ? "#faf7f2" : "#12100e");
   // The wrapper has no theme-color; its bar icons have to be told.
   try {
     native()?.setBarsLight?.(t === "light");
@@ -4796,8 +4796,8 @@ const inviteLink = () => (state.invite ? inviteLinkFor(state.invite) : "");
 
 function qrColors() {
   return resolvedTheme() === "light"
-    ? { dark: "#101522", light: "#ffffff" }
-    : { dark: "#0a0d14", light: "#ffffff" };
+    ? { dark: "#1a1512", light: "#ffffff" }
+    : { dark: "#12100e", light: "#ffffff" };
 }
 
 // The screen that turns trust on first use into a checked identity. It is

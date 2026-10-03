@@ -7,7 +7,7 @@
         <item name="android:navigationBarColor">@color/kestrel_bg</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
-        <item name="android:colorAccent">#6ea8ff</item>
+        <item name="android:colorAccent">#fb923c</item>
     </style>
 
     <style name="Theme.Kestrel.Panic">

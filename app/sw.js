@@ -1,6 +1,6 @@
 // Kestrel service worker. App shell only; location data never touches a cache.
 
-const VERSION = "kestrel-v1";
+const VERSION = "kestrel-v2";
 
 const PRECACHE = [
   "/",

@@ -87,8 +87,8 @@ input {
 
 #screen-lock {
   background:
-    radial-gradient(520px 460px at 50% 30%, rgba(45, 212, 191, 0.10), transparent 70%),
-    radial-gradient(460px 380px at 80% 96%, rgba(139, 92, 246, 0.08), transparent 70%),
+    radial-gradient(520px 460px at 50% 30%, rgba(251, 146, 60, 0.10), transparent 70%),
+    radial-gradient(460px 380px at 80% 96%, rgba(255, 191, 87, 0.08), transparent 70%),
     var(--bg);
   display: grid;
   place-items: center;
@@ -111,14 +111,14 @@ input {
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: radial-gradient(closest-side, rgba(45, 212, 191, 0.16), transparent);
+  background: radial-gradient(closest-side, rgba(251, 146, 60, 0.16), transparent);
   margin-bottom: 16px;
 }
 
 .lock-logo {
   width: 60px;
   height: 60px;
-  filter: drop-shadow(0 8px 24px rgba(45, 212, 191, 0.32));
+  filter: drop-shadow(0 8px 24px rgba(251, 146, 60, 0.32));
 }
 
 .lock-title {
@@ -126,6 +126,10 @@ input {
   font-size: 1.5rem;
   font-weight: 750;
   letter-spacing: -0.02em;
+  background: var(--accent-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .lock-sub {
@@ -205,8 +209,8 @@ input {
 
 #screen-onboarding {
   background:
-    radial-gradient(520px 420px at 50% 26%, rgba(45, 212, 191, 0.08), transparent 70%),
-    radial-gradient(460px 380px at 85% 92%, rgba(139, 92, 246, 0.07), transparent 70%),
+    radial-gradient(520px 420px at 50% 26%, rgba(251, 146, 60, 0.08), transparent 70%),
+    radial-gradient(460px 380px at 85% 92%, rgba(255, 191, 87, 0.07), transparent 70%),
     var(--bg);
   overflow-y: auto;
 }
@@ -237,14 +241,14 @@ input {
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: radial-gradient(closest-side, rgba(45, 212, 191, 0.14), transparent);
+  background: radial-gradient(closest-side, rgba(251, 146, 60, 0.14), transparent);
   margin-bottom: 20px;
 }
 
 .ob-logo {
   width: 84px;
   height: 84px;
-  filter: drop-shadow(0 10px 30px rgba(45, 212, 191, 0.35));
+  filter: drop-shadow(0 10px 30px rgba(251, 146, 60, 0.35));
 }
 
 .ob-wordmark {
@@ -313,7 +317,7 @@ a.land-download {
 
 /* Notice variant: the invite and legacy cards need to read as "look here". */
 .land-card.land-note {
-  border-color: rgba(45, 212, 191, 0.35);
+  border-color: rgba(251, 146, 60, 0.35);
   margin-top: 0;
   margin-bottom: 20px;
 }
@@ -488,7 +492,7 @@ a.land-download {
 .btn-primary {
   background: var(--accent-grad);
   color: var(--accent-ink);
-  box-shadow: 0 10px 28px rgba(45, 212, 191, 0.28);
+  box-shadow: 0 10px 28px rgba(251, 146, 60, 0.28);
 }
 
 .btn-secondary {
@@ -517,7 +521,7 @@ a.land-download {
 
 .btn-danger-ghost {
   background: transparent;
-  border: 1px solid rgba(244, 63, 94, 0.45);
+  border: 1px solid rgba(251, 113, 133, 0.45);
   color: var(--sos);
 }
 
@@ -615,7 +619,7 @@ a.land-download {
 
 #map.offgrid {
   background:
-    radial-gradient(560px 480px at 50% 34%, rgba(45, 212, 191, 0.10), transparent 68%),
+    radial-gradient(560px 480px at 50% 34%, rgba(251, 146, 60, 0.10), transparent 68%),
     radial-gradient(rgba(154, 167, 189, 0.16) 1px, transparent 1.4px),
     var(--bg);
   background-size: auto, 24px 24px, auto;
@@ -623,7 +627,7 @@ a.land-download {
 
 :root[data-theme="light"] #map.offgrid {
   background:
-    radial-gradient(560px 480px at 50% 34%, rgba(45, 212, 191, 0.12), transparent 68%),
+    radial-gradient(560px 480px at 50% 34%, rgba(251, 146, 60, 0.12), transparent 68%),
     radial-gradient(rgba(15, 23, 42, 0.13) 1px, transparent 1.4px),
     var(--bg);
   background-size: auto, 24px 24px, auto;
@@ -675,12 +679,12 @@ a.land-download {
 
 .dot-ok {
   background: var(--live);
-  box-shadow: 0 0 8px rgba(52, 211, 153, 0.8);
+  box-shadow: 0 0 8px rgba(74, 222, 128, 0.8);
 }
 
 .dot-reconnecting {
   background: var(--warn);
-  box-shadow: 0 0 8px rgba(251, 191, 36, 0.8);
+  box-shadow: 0 0 8px rgba(253, 224, 71, 0.8);
 }
 
 .dot-idle {
@@ -741,7 +745,7 @@ a.land-download {
 }
 
 .circle-row-current {
-  border-color: rgba(45, 212, 191, 0.35);
+  border-color: rgba(251, 146, 60, 0.35);
   cursor: default;
 }
 
@@ -812,7 +816,7 @@ a.land-download {
 }
 
 .banner-warn {
-  border-color: rgba(251, 191, 36, 0.4);
+  border-color: rgba(253, 224, 71, 0.4);
   color: var(--warn);
 }
 
@@ -825,7 +829,7 @@ a.land-download {
 }
 
 .banner-demo {
-  border-color: rgba(45, 212, 191, 0.4);
+  border-color: rgba(251, 146, 60, 0.4);
 }
 
 .banner-btn {
@@ -1006,13 +1010,13 @@ a.land-download {
 /* While SOS is armed the check button is the cancel; make it read as one. */
 .qbtn-check.check-attn {
   color: var(--live);
-  border-color: rgba(52, 211, 153, 0.6);
-  box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.25);
+  border-color: rgba(74, 222, 128, 0.6);
+  box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.25);
 }
 
 .qbtn-sos {
   color: var(--sos);
-  border-color: rgba(244, 63, 94, 0.45);
+  border-color: rgba(251, 113, 133, 0.45);
 }
 
 /* SOS radial arm progress: conic ring driven by --p (0..1). */
@@ -1034,7 +1038,7 @@ a.land-download {
 }
 
 .qbtn-sos.arming {
-  background: rgba(244, 63, 94, 0.16);
+  background: rgba(251, 113, 133, 0.16);
 }
 
 .qbtn-sos.sos-active {
@@ -1108,7 +1112,7 @@ a.land-download {
   background: var(--accent-grad);
   border-color: transparent;
   color: var(--accent-ink);
-  box-shadow: 0 8px 26px rgba(45, 212, 191, 0.32);
+  box-shadow: 0 8px 26px rgba(251, 146, 60, 0.32);
 }
 
 .share-toggle.on .share-dot {
@@ -1124,7 +1128,7 @@ a.land-download {
 
 @keyframes sos-throb {
   50% {
-    box-shadow: 0 0 0 7px rgba(244, 63, 94, 0.25);
+    box-shadow: 0 0 0 7px rgba(251, 113, 133, 0.25);
   }
 }
 
@@ -1233,13 +1237,13 @@ a.land-download {
 }
 
 .member-card.mc-sos {
-  border-color: rgba(244, 63, 94, 0.55);
+  border-color: rgba(251, 113, 133, 0.55);
   background: color-mix(in srgb, var(--sos) 9%, var(--bg-1));
   animation: sos-throb 1.4s ease-in-out infinite;
 }
 
 .member-card.mc-overdue {
-  border-color: rgba(251, 191, 36, 0.55);
+  border-color: rgba(253, 224, 71, 0.55);
   background: color-mix(in srgb, var(--warn) 9%, var(--bg-1));
 }
 
@@ -1316,7 +1320,7 @@ a.land-download {
   color: #047857;
 }
 :root[data-theme="light"] .chip-checkin {
-  color: #0f766e;
+  color: #c2410c;
 }
 :root[data-theme="light"] .chip-overdue {
   color: #fff;
@@ -1354,7 +1358,7 @@ a.land-download {
 }
 
 .bat-low {
-  border-color: rgba(244, 63, 94, 0.6);
+  border-color: rgba(251, 113, 133, 0.6);
 }
 
 .sheet-foot {
@@ -1376,11 +1380,11 @@ a.land-download {
 }
 
 .notice-warn {
-  border-color: rgba(251, 191, 36, 0.4);
+  border-color: rgba(253, 224, 71, 0.4);
 }
 
 .notice-sos {
-  border-color: rgba(244, 63, 94, 0.4);
+  border-color: rgba(251, 113, 133, 0.4);
 }
 
 .notice-sos .notice-title {
@@ -1406,7 +1410,7 @@ a.land-download {
   padding: 16px;
   margin-bottom: 8px;
   background:
-    radial-gradient(220px 120px at 12% 0%, rgba(45, 212, 191, 0.10), transparent 70%),
+    radial-gradient(220px 120px at 12% 0%, rgba(251, 146, 60, 0.10), transparent 70%),
     var(--bg-1);
   border: 1px solid var(--line);
 }
@@ -1444,11 +1448,11 @@ a.land-download {
 }
 
 .focus-card.fc-sos {
-  border-color: rgba(244, 63, 94, 0.55);
+  border-color: rgba(251, 113, 133, 0.55);
 }
 
 .focus-card.fc-overdue {
-  border-color: rgba(251, 191, 36, 0.55);
+  border-color: rgba(253, 224, 71, 0.55);
 }
 
 .fc-head {
@@ -1598,7 +1602,7 @@ a.land-download {
   width: 64px;
   height: 64px;
   border-radius: 50%;
-  background: radial-gradient(closest-side, rgba(45, 212, 191, 0.35), transparent 72%);
+  background: radial-gradient(closest-side, rgba(251, 146, 60, 0.35), transparent 72%);
   z-index: 1;
   pointer-events: none;
 }
@@ -1680,7 +1684,7 @@ a.land-download {
 @keyframes mk-bloom-pop {
   30% {
     transform: scale(1.28);
-    box-shadow: 0 0 0 8px rgba(45, 212, 191, 0.25), var(--shadow-1);
+    box-shadow: 0 0 0 8px rgba(251, 146, 60, 0.25), var(--shadow-1);
   }
 }
 
@@ -1734,12 +1738,12 @@ a.land-download {
 }
 
 .toast-warn {
-  border-color: rgba(251, 191, 36, 0.45);
+  border-color: rgba(253, 224, 71, 0.45);
   color: var(--warn);
 }
 
 .toast-sos {
-  border-color: rgba(244, 63, 94, 0.55);
+  border-color: rgba(251, 113, 133, 0.55);
   color: var(--sos);
 }
 
@@ -1757,7 +1761,7 @@ a.land-download {
 .ov-scrim {
   position: absolute;
   inset: 0;
-  background: rgba(4, 6, 10, 0.55);
+  background: rgba(12, 8, 5, 0.55);
   opacity: 0;
   transition: opacity var(--t-med);
 }
@@ -1833,7 +1837,7 @@ a.land-download {
   color: var(--warn);
   padding: 10px 12px;
   border-radius: var(--r-sm);
-  border: 1px solid rgba(251, 191, 36, 0.4);
+  border: 1px solid rgba(253, 224, 71, 0.4);
   background: color-mix(in srgb, var(--warn) 7%, transparent);
 }
 
@@ -2042,11 +2046,11 @@ a.land-download {
 }
 
 :root[data-theme="light"] .about-credit a {
-  color: #0f766e;
+  color: #c2410c;
 }
 
 .danger-zone {
-  border-color: rgba(244, 63, 94, 0.35);
+  border-color: rgba(251, 113, 133, 0.35);
 }
 
 .danger-title {
@@ -2064,7 +2068,7 @@ div.danger-zone {
   gap: 12px;
   padding: 14px;
   border-radius: var(--r-md);
-  border: 1px solid rgba(244, 63, 94, 0.35);
+  border: 1px solid rgba(251, 113, 133, 0.35);
 }
 
 /* The reveal a destructive action opens: what it costs, then the button that
@@ -2192,7 +2196,7 @@ div.danger-zone {
 }
 
 .safety-col:last-child .safety {
-  border-color: rgba(251, 191, 36, 0.45);
+  border-color: rgba(253, 224, 71, 0.45);
 }
 
 @media (min-width: 430px) {
@@ -2263,7 +2267,7 @@ div.danger-zone {
   padding: 2px 8px;
   border-radius: var(--r-full);
   background: color-mix(in srgb, var(--warn) 18%, transparent);
-  border: 1px solid rgba(251, 191, 36, 0.45);
+  border: 1px solid rgba(253, 224, 71, 0.45);
   color: var(--warn);
   font-size: 0.75rem;
   font-weight: 700;
@@ -2271,7 +2275,7 @@ div.danger-zone {
 }
 
 .banner-keys {
-  border-color: rgba(244, 63, 94, 0.5);
+  border-color: rgba(251, 113, 133, 0.5);
   color: var(--sos);
 }
 
@@ -2327,7 +2331,7 @@ div.danger-zone {
 }
 
 .mem-row.mem-changed {
-  border-color: rgba(244, 63, 94, 0.45);
+  border-color: rgba(251, 113, 133, 0.45);
   background: color-mix(in srgb, var(--sos) 6%, var(--bg-2));
 }
 
@@ -2359,7 +2363,7 @@ div.danger-zone {
 
 .vp-on {
   background: color-mix(in srgb, var(--live) 16%, transparent);
-  border: 1px solid rgba(52, 211, 153, 0.45);
+  border: 1px solid rgba(74, 222, 128, 0.45);
   color: var(--live);
 }
 
@@ -2371,7 +2375,7 @@ div.danger-zone {
 
 .vp-alert {
   background: color-mix(in srgb, var(--sos) 16%, transparent);
-  border: 1px solid rgba(244, 63, 94, 0.5);
+  border: 1px solid rgba(251, 113, 133, 0.5);
   color: var(--sos);
 }
 
@@ -2410,7 +2414,7 @@ div.danger-zone {
   padding: 14px;
   border-radius: var(--r-md);
   background: var(--bg-2);
-  border: 1px solid rgba(45, 212, 191, 0.4);
+  border: 1px solid rgba(251, 146, 60, 0.4);
 }
 
 .review-title {
@@ -2478,7 +2482,7 @@ div.danger-zone {
 #screen-notice {
   overflow-y: auto;
   background:
-    radial-gradient(600px 300px at 50% 0%, rgba(251, 191, 36, 0.10), transparent 70%),
+    radial-gradient(600px 300px at 50% 0%, rgba(253, 224, 71, 0.10), transparent 70%),
     var(--bg);
 }
 

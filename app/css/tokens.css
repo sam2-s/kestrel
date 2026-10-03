@@ -2,16 +2,16 @@
    from here. Dark is the primary theme; light is fully supported. */
 
 :root {
-  /* Brand: feather iridescence, teal into violet on night ink. */
-  --accent: #2dd4bf;
-  --accent-2: #8b5cf6;
-  --accent-grad: linear-gradient(135deg, #2dd4bf 0%, #60a5fa 55%, #8b5cf6 100%);
-  --accent-ink: #06211e;
+  /* Brand: ember at dusk, gold into burnt orange on warm ink. */
+  --accent: #fb923c;
+  --accent-2: #fbbf24;
+  --accent-grad: linear-gradient(135deg, #fbbf24 0%, #fb923c 55%, #ea580c 100%);
+  --accent-ink: #2a1204;
 
-  --live: #34d399;
-  --warn: #fbbf24;
-  --sos: #f43f5e;
-  --stale: #94a3b8;
+  --live: #4ade80;
+  --warn: #fde047;
+  --sos: #fb7185;
+  --stale: #a39a8e;
 
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter,
     "Helvetica Neue", Arial, sans-serif;
@@ -19,7 +19,7 @@
 
   --r-sm: 10px;
   --r-md: 16px;
-  --r-lg: 22px;
+  --r-lg: 24px;
   --r-full: 999px;
 
   --t-fast: 150ms cubic-bezier(0.3, 0.7, 0.4, 1);
@@ -36,17 +36,17 @@
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #0a0d14;
-  --bg-1: #101522;
-  --bg-2: #171e30;
-  --bg-3: #1f2840;
-  --glass: rgba(16, 21, 34, 0.82);
-  --glass-border: rgba(148, 163, 184, 0.14);
-  --ink: #e6ebf5;
-  --ink-2: #9aa7bd;
+  --bg: #12100e;
+  --bg-1: #1a1714;
+  --bg-2: #221e1a;
+  --bg-3: #2b2621;
+  --glass: rgba(26, 23, 20, 0.84);
+  --glass-border: rgba(251, 146, 60, 0.16);
+  --ink: #f4efe8;
+  --ink-2: #b8ada0;
   /* 4.5:1 or better on bg-1 and bg-2 (WCAG AA for small text) */
-  --ink-3: #8290a8;
-  --line: rgba(148, 163, 184, 0.12);
+  --ink-3: #948a7f;
+  --line: rgba(244, 220, 190, 0.12);
   --map-filter: none;
 }
 
@@ -55,21 +55,22 @@
   /* The dark theme's amber and rose fail contrast as TEXT on light
      backgrounds; these darker variants hold 4.5:1 on bg-1/bg-2 and also
      feed the tinted chips and borders, which just get a touch deeper. */
+  --accent: #c2410c;
   --warn: #a16207;
   --sos: #be123c;
-  --bg: #f4f6fb;
+  --bg: #faf7f2;
   --bg-1: #ffffff;
-  --bg-2: #eef1f8;
-  --bg-3: #e3e8f2;
-  --glass: rgba(255, 255, 255, 0.88);
-  --glass-border: rgba(15, 23, 42, 0.08);
-  --ink: #101522;
-  --ink-2: #4a5568;
+  --bg-2: #f3efe8;
+  --bg-3: #e9e2d8;
+  --glass: rgba(255, 255, 255, 0.9);
+  --glass-border: rgba(74, 47, 20, 0.1);
+  --ink: #1a1512;
+  --ink-2: #55504a;
   /* 4.5:1 or better on bg-1 and bg-2 (WCAG AA for small text) */
-  --ink-3: #5c6779;
-  --line: rgba(15, 23, 42, 0.08);
-  --shadow-1: 0 1px 2px rgba(15, 23, 42, 0.08), 0 4px 16px rgba(15, 23, 42, 0.08);
-  --shadow-2: 0 4px 12px rgba(15, 23, 42, 0.12), 0 12px 40px rgba(15, 23, 42, 0.12);
+  --ink-3: #6b625a;
+  --line: rgba(74, 47, 20, 0.1);
+  --shadow-1: 0 1px 2px rgba(58, 38, 18, 0.08), 0 4px 16px rgba(58, 38, 18, 0.08);
+  --shadow-2: 0 4px 12px rgba(58, 38, 18, 0.12), 0 12px 40px rgba(58, 38, 18, 0.12);
 }
 
 @media (prefers-reduced-motion: reduce) {

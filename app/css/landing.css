@@ -25,9 +25,9 @@
   pointer-events: none;
   z-index: 0;
   background:
-    radial-gradient(closest-side, rgba(45, 212, 191, 0.22), transparent 70%) 20% 30% / 55% 100% no-repeat,
-    radial-gradient(closest-side, rgba(139, 92, 246, 0.20), transparent 70%) 80% 20% / 55% 100% no-repeat,
-    radial-gradient(closest-side, rgba(96, 165, 250, 0.14), transparent 70%) 50% 60% / 60% 100% no-repeat;
+    radial-gradient(closest-side, rgba(251, 146, 60, 0.22), transparent 70%) 20% 30% / 55% 100% no-repeat,
+    radial-gradient(closest-side, rgba(255, 191, 87, 0.20), transparent 70%) 80% 20% / 55% 100% no-repeat,
+    radial-gradient(closest-side, rgba(234, 88, 12, 0.14), transparent 70%) 50% 60% / 60% 100% no-repeat;
   filter: blur(30px);
   animation: lnd-drift 22s ease-in-out infinite alternate;
 }
@@ -56,16 +56,16 @@
   width: 5px;
   height: 5px;
   border-radius: 50% 60% 50% 60%;
-  background: rgba(45, 212, 191, 0.55);
-  box-shadow: 0 0 6px rgba(45, 212, 191, 0.35);
+  background: rgba(251, 146, 60, 0.55);
+  box-shadow: 0 0 6px rgba(251, 146, 60, 0.35);
   animation: lnd-murmur 16s ease-in-out infinite;
 }
 
-.lnd-bird:nth-child(2) { top: 34%; left: 24%; animation-delay: -1.2s; animation-duration: 17s; background: rgba(96, 165, 250, 0.5); }
+.lnd-bird:nth-child(2) { top: 34%; left: 24%; animation-delay: -1.2s; animation-duration: 17s; background: rgba(234, 88, 12, 0.5); }
 .lnd-bird:nth-child(3) { top: 26%; left: 30%; animation-delay: -2.6s; animation-duration: 15s; }
-.lnd-bird:nth-child(4) { top: 40%; left: 34%; animation-delay: -4s; animation-duration: 18s; background: rgba(139, 92, 246, 0.45); }
+.lnd-bird:nth-child(4) { top: 40%; left: 34%; animation-delay: -4s; animation-duration: 18s; background: rgba(255, 191, 87, 0.45); }
 .lnd-bird:nth-child(5) { top: 22%; left: 42%; animation-delay: -5.5s; animation-duration: 16.5s; }
-.lnd-bird:nth-child(6) { top: 36%; left: 50%; animation-delay: -7s; animation-duration: 17.5s; background: rgba(96, 165, 250, 0.45); }
+.lnd-bird:nth-child(6) { top: 36%; left: 50%; animation-delay: -7s; animation-duration: 17.5s; background: rgba(234, 88, 12, 0.45); }
 .lnd-bird:nth-child(7) { top: 30%; left: 58%; animation-delay: -8.5s; animation-duration: 15.5s; }
 
 @keyframes lnd-murmur {
@@ -240,8 +240,8 @@
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at 30% 35%, rgba(45, 212, 191, 0.16), transparent 45%),
-    radial-gradient(circle at 70% 60%, rgba(139, 92, 246, 0.14), transparent 45%),
+    radial-gradient(circle at 30% 35%, rgba(251, 146, 60, 0.16), transparent 45%),
+    radial-gradient(circle at 70% 60%, rgba(255, 191, 87, 0.14), transparent 45%),
     repeating-linear-gradient(0deg, rgba(148, 163, 184, 0.06) 0 1px, transparent 1px 34px),
     repeating-linear-gradient(90deg, rgba(148, 163, 184, 0.06) 0 1px, transparent 1px 34px);
 }
@@ -338,7 +338,7 @@
   border-radius: 12px;
   margin-bottom: 12px;
   color: var(--accent);
-  background: radial-gradient(closest-side, rgba(45, 212, 191, 0.16), transparent 75%);
+  background: radial-gradient(closest-side, rgba(251, 146, 60, 0.16), transparent 75%);
 }
 
 .lnd-feature-title {
@@ -384,13 +384,13 @@
 }
 
 .lnd-honesty-never {
-  background: linear-gradient(180deg, rgba(45, 212, 191, 0.09), transparent 60%), var(--bg-2);
-  border-color: rgba(45, 212, 191, 0.28);
+  background: linear-gradient(180deg, rgba(251, 146, 60, 0.09), transparent 60%), var(--bg-2);
+  border-color: rgba(251, 146, 60, 0.28);
 }
 
 .lnd-honesty-learns {
-  background: linear-gradient(180deg, rgba(251, 191, 36, 0.08), transparent 60%), var(--bg-2);
-  border-color: rgba(251, 191, 36, 0.28);
+  background: linear-gradient(180deg, rgba(253, 224, 71, 0.08), transparent 60%), var(--bg-2);
+  border-color: rgba(253, 224, 71, 0.28);
 }
 
 .lnd-honesty-col-title {

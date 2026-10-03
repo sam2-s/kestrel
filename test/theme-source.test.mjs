@@ -15,8 +15,8 @@ test("the wrapper theme is light by day and dark at night", () => {
   assert.match(res("values/themes.xml"), /windowLightStatusBar">true</);
   assert.match(res("values-night/themes.xml"), /windowLightStatusBar">false</);
   const color = (xml, name) => xml.match(new RegExp(`<color name="${name}">(#[0-9a-f]{6})<`))?.[1];
-  assert.equal(color(res("values/colors.xml"), "kestrel_bg"), "#f4f6fb");
-  assert.equal(color(res("values-night/colors.xml"), "kestrel_bg"), "#0a0d14");
+  assert.equal(color(res("values/colors.xml"), "kestrel_bg"), "#faf7f2");
+  assert.equal(color(res("values-night/colors.xml"), "kestrel_bg"), "#12100e");
   for (const name of ["kestrel_fg", "kestrel_fg_dim"]) {
     assert.ok(color(res("values/colors.xml"), name) && color(res("values-night/colors.xml"), name), `${name} in both`);
   }

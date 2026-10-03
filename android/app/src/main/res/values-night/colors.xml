@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Mirrors the web app's dark design tokens (css/tokens.css). -->
-    <color name="kestrel_bg">#0a0d14</color>
-    <color name="kestrel_fg">#e8ecf4</color>
-    <color name="kestrel_fg_dim">#a8b0c0</color>
+    <color name="kestrel_bg">#12100e</color>
+    <color name="kestrel_fg">#f4efe8</color>
+    <color name="kestrel_fg_dim">#b8ada0</color>
 </resources>

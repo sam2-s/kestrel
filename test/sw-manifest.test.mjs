@@ -34,8 +34,8 @@ test("manifest has the required fields", () => {
   // apple-mobile-web-app-capable for those.
   assert.equal(manifest.display, "standalone");
   assert.equal(manifest.orientation, "portrait");
-  assert.equal(manifest.background_color, "#0a0d14");
-  assert.equal(manifest.theme_color, "#0a0d14");
+  assert.equal(manifest.background_color, "#12100e");
+  assert.equal(manifest.theme_color, "#12100e");
 });
 
 test("manifest icon set covers 192, 512, maskable 512 and the svg", () => {
