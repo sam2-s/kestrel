@@ -74,7 +74,7 @@ def main():
     if not ff:
         print("firefox not found", file=sys.stderr)
         return 3
-    profile = tempfile.mkdtemp(prefix="starling-shot-")
+    profile = tempfile.mkdtemp(prefix="kestrel-shot-")
     port = int(os.environ.get("SHOT_PORT", "2828"))
     with open(os.path.join(profile, "user.js"), "w") as f:
         f.write(f'user_pref("marionette.port", {port});\n')

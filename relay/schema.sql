@@ -1,4 +1,4 @@
--- Starling relay storage. Ciphertext, pinned member keys, and the signature
+-- Kestrel relay storage. Ciphertext, pinned member keys, and the signature
 -- each point was posted with; every row carries a server timestamp (srv) so
 -- the TTL sweep can expire it.
 --
