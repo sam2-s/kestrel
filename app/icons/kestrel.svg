@@ -1,19 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <defs>
-    <linearGradient id="sg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#2dd4bf"/>
-      <stop offset="0.55" stop-color="#60a5fa"/>
-      <stop offset="1" stop-color="#8b5cf6"/>
+    <linearGradient id="kg" gradientUnits="userSpaceOnUse" x1="96" y1="56" x2="416" y2="456">
+      <stop offset="0" stop-color="#fbbf24"/>
+      <stop offset="0.45" stop-color="#fb923c"/>
+      <stop offset="1" stop-color="#ea580c"/>
     </linearGradient>
   </defs>
-  <path fill="url(#sg)" fill-rule="evenodd" d="M256 464
-    C 196 388 120 310 120 216
-    A 136 136 0 1 1 392 216
-    C 392 310 316 388 256 464 Z
-    M 162 214
-    C 196 176 232 170 256 194
-    C 280 170 316 176 350 214
-    C 316 200 288 204 268 224
-    L 256 236 L 244 224
-    C 224 204 196 200 162 214 Z"/>
+  <path id="half" fill="url(#kg)" d="M256 72
+    C282 72 300 90 302 114
+    C298 126 300 134 310 140
+    C350 132 408 106 464 60
+    C472 54 478 62 472 70
+    C432 116 384 156 340 186
+    C336 236 324 288 312 330
+    C302 370 294 408 288 440
+    L326 484
+    L256 448
+    Z"/>
+  <use href="#half" transform="translate(512 0) scale(-1 1)"/>
 </svg>
